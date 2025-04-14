@@ -1,0 +1,4 @@
+/.env
+/__pycache__
+/cached_transactions.json
+/venv
