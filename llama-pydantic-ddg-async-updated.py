@@ -4,6 +4,17 @@ from pydantic_ai.models.openai import OpenAIModel
 from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_ai.common_tools.duckduckgo import duckduckgo_search_tool
 from pydantic_ai.messages import ToolCallPart, ToolReturnPart
+from pydantic_ai import Agent
+from pydantic_ai.messages import (
+    FinalResultEvent,
+    FunctionToolCallEvent,
+    FunctionToolResultEvent,
+    PartDeltaEvent,
+    PartStartEvent,
+    TextPartDelta,
+    ToolCallPartDelta,
+)
+from pydantic_ai.tools import RunContext
 from agent_functions import stream_agent_response
 import asyncio
 import json
@@ -11,8 +22,70 @@ import json
 ollama_model = OpenAIModel(
     model_name='llama3.2', provider=OpenAIProvider(base_url='http://localhost:11434/v1')
 )
-agent = Agent(ollama_model, 
+search_agent = Agent(ollama_model, 
         tools=[duckduckgo_search_tool()],
         system_prompt='Use tools as needed and respond to the user.')
 
-asyncio.run(stream_agent_response(agent, "What's the latest news about space exploration?"))
+
+output_messages: list[str] = []
+
+async def main():
+    user_prompt = "What's the latest news about space exploration?"
+    async with search_agent.iter(user_prompt) as run:
+        async for node in run:
+            if Agent.is_user_prompt_node(node):
+                # A user prompt node => The user has provided input
+                output_messages.append(f'=== UserPromptNode: {node.user_prompt} ===')
+            elif Agent.is_model_request_node(node):
+                # A model request node => We can stream tokens from the model's request
+                output_messages.append(
+                    '=== ModelRequestNode: streaming partial request tokens ==='
+                )
+                async with node.stream(run.ctx) as request_stream:
+                    async for event in request_stream:
+                        if isinstance(event, PartStartEvent):
+                            output_messages.append(
+                                f'[Request] Starting part {event.index}: {event.part!r}'
+                            )
+                        elif isinstance(event, PartDeltaEvent):
+                            if isinstance(event.delta, TextPartDelta):
+                                output_messages.append(
+                                    f'[Request] Part {event.index} text delta: {event.delta.content_delta!r}'
+                                )
+                            elif isinstance(event.delta, ToolCallPartDelta):
+                                output_messages.append(
+                                    f'[Request] Part {event.index} args_delta={event.delta.args_delta}'
+                                )
+                        elif isinstance(event, FinalResultEvent):
+                            output_messages.append(
+                                f'[Result] The model produced a final output (tool_name={event.tool_name})'
+                            )
+            elif Agent.is_call_tools_node(node):
+                # A handle-response node => The model returned some data, potentially calls a tool
+                output_messages.append(
+                    '=== CallToolsNode: streaming partial response & tool usage ==='
+                )
+                async with node.stream(run.ctx) as handle_stream:
+                    async for event in handle_stream:
+                        if isinstance(event, FunctionToolCallEvent):
+                            output_messages.append(
+                                f'[Tools] The LLM calls tool={event.part.tool_name!r} with args={event.part.args} (tool_call_id={event.part.tool_call_id!r})'
+                            )
+                        elif isinstance(event, FunctionToolResultEvent):
+                            output_messages.append(
+                                f'[Tools] Tool call {event.tool_call_id!r} returned => {event.result.content}'
+                            )
+            elif Agent.is_end_node(node):
+                assert run.result.output == node.data.output
+                # Once an End node is reached, the agent run is complete
+                output_messages.append(
+                    f'=== Final Agent Output: {run.result.output} ==='
+                )
+
+
+if __name__ == '__main__':
+    asyncio.run(main())
+
+    print(output_messages)
+    with open('model_output.txt','w') as outfile:
+        outfile.write(str([x+'\n' for x in output_messages]))
