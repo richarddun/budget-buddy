@@ -9,11 +9,10 @@ ollama_model = OpenAIModel(
     model_name='llama3.2', provider=OpenAIProvider(base_url='http://localhost:11434/v1')
 )
 agent = Agent(ollama_model, 
-        tools=[duckduckgo_search_tool()],
-        system_prompt='Search DuckDuckGo for the given query and return the results.')
+        system_prompt='You are a helpful assistant.')
 
 async def main():
-    async with agent.run_stream('What is the top story in AI today?') as result:
+    async with agent.run_stream('Tell me an interesting fact about water') as result:
         async for message in result.stream_text(delta=True):
             print(message)
 """
