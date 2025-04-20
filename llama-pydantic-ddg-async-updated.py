@@ -16,18 +16,67 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.tools import RunContext
 from agent_functions import stream_agent_response
+from shimfinity import LlamaShimModel
+
 import asyncio
 import json
 
-ollama_model = OpenAIModel(
+ollama_model = LlamaShimModel(
     model_name='llama3.2', provider=OpenAIProvider(base_url='http://localhost:11434/v1')
 )
 search_agent = Agent(ollama_model, 
         tools=[duckduckgo_search_tool()],
-        system_prompt='Use tools as needed and respond to the user.')
+        system_prompt='Search the internet and assist the user with their questions.')
 
 
 output_messages: list[str] = []
+
+async def test():
+    user_prompt = "What's the latest news about space exploration?"
+    result = await search_agent.run(user_prompt)
+    print(result.output)
+
+async def graph_debug_main():
+    user_prompt = "What's the latest news about space exploration?"
+    async with search_agent.iter(user_prompt) as run:
+        async for node in run:
+            print(f"\n📦 Node: {type(node).__name__}")
+
+            if Agent.is_user_prompt_node(node):
+                print(f"👤 Prompt: {node.user_prompt}")
+
+            elif Agent.is_model_request_node(node):
+                print("🤖 Model Response:")
+                async with node.stream(run.ctx) as stream:
+                    async for event in stream:
+                        if isinstance(event, PartStartEvent):
+                            print(f"  🔹 Start Part {event.index}")
+                        elif isinstance(event, PartDeltaEvent):
+                            if isinstance(event.delta, TextPartDelta):
+                                print(f"  📝 Delta: {event.delta.content_delta}")
+                            elif isinstance(event.delta, ToolCallPartDelta):
+                                print(f"  🛠️ ToolCallDelta: {event.delta.args_delta}")
+                        elif isinstance(event, FinalResultEvent):
+                            print(f"  ✅ Final Result: tool_name={event.tool_name}")
+
+            elif Agent.is_call_tools_node(node):
+                print("🔧 Tool Execution:")
+                async with node.stream(run.ctx) as stream:
+                    async for event in stream:
+                        if isinstance(event, FunctionToolCallEvent):
+                            print(f"  📞 Tool Call: {event.part.tool_name} → {event.part.args}")
+                        elif isinstance(event, FunctionToolResultEvent):
+                            print(f"  📦 Tool Result: {event.result.content}")
+
+            elif Agent.is_end_node(node):
+                print(f"🏁 Final Output: {run.result.output}")
+
+
+async def newmain():
+    user_prompt = "What phase is the moon at today?"
+    async with search_agent.run_stream(user_prompt) as result:
+        async for message in result.stream_text(delta=True):
+            print(message,)
 
 async def main():
     user_prompt = "What's the latest news about space exploration?"
@@ -84,8 +133,10 @@ async def main():
 
 
 if __name__ == '__main__':
-    asyncio.run(main())
-
+    #asyncio.run(main())
+    #asyncio.run(test())
+    asyncio.run(newmain())
+    #asyncio.run(graph_debug_main())
     print(output_messages)
     with open('model_output.txt','w') as outfile:
         outfile.write(str([x+'\n' for x in output_messages]))
