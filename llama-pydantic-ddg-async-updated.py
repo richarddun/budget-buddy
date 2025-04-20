@@ -17,7 +17,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.tools import RunContext
 from agent_functions import stream_agent_response
 from shimfinity import LlamaShimModel
-
+import time
 import asyncio
 import json
 
@@ -73,10 +73,12 @@ async def graph_debug_main():
 
 
 async def newmain():
-    user_prompt = "What phase is the moon at today?"
+    user_prompt = "Are there any interesting family-friendly events in Arklow, Co. Wicklow tomorrow (Monday 21st April)?"
     async with search_agent.run_stream(user_prompt) as result:
         async for message in result.stream_text(delta=True):
-            print(message,)
+            for char in message:
+                print(char, end="", flush=True)
+                time.sleep(0.01)
 
 async def main():
     user_prompt = "What's the latest news about space exploration?"
