@@ -13,6 +13,10 @@ class YNABSdkClient:
         self.transactions_api = TransactionsApi(self.api_client)
         self.accounts_api = AccountsApi(self.api_client)
 
+    def get_all_budgets(self):
+        budgets = self.budgets_api.get_budgets().data.budgets
+        return budgets
+
     def get_first_budget_id(self):
         budgets = self.budgets_api.get_budgets().data.budgets
         return budgets[0].id if budgets else None

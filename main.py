@@ -1,23 +1,68 @@
 from fastapi import FastAPI
-from ynab_client import YNABClient
+from ynab_sdk_client import YNABSdkClient
 from ynab_cache import get_transactions_cached
 from fastapi.responses import HTMLResponse
 from fastapi import Request
 from collections import defaultdict
-from ynab_client import YNABClient
+from agents.budget_agent import budget_agent
 from datetime import datetime
 import statistics
 
 app = FastAPI()
-ynab = YNABClient()
+ynab = YNABSdkClient()
 
-@app.get("/")
-def read_root():
-    return {"hello": "budget buddy"}
+@app.get("/", response_class=HTMLResponse)
+def index():
+    return """
+    <html>
+      <head>
+        <style>
+          body { font-family: sans-serif; margin: 2em; }
+          form { display: flex; gap: 0.5em; margin-bottom: 1em; }
+          input { flex: 1; padding: 0.5em; font-size: 1em; }
+          button { padding: 0.5em 1em; }
+          pre { white-space: pre-wrap; background: #f4f4f4; padding: 1em; border-radius: 5px; }
+        </style>
+      </head>
+      <body>
+        <h1>💬 Budget Chat</h1>
+        <form id="chat">
+          <input type="text" id="user_input" placeholder="Ask something...">
+          <button type="submit">Send</button>
+        </form>
+        <pre id="response"></pre>
+        <script>
+          document.getElementById("chat").onsubmit = async (e) => {
+            e.preventDefault();
+            const prompt = document.getElementById("user_input").value;
+            document.getElementById("response").innerText = "Thinking...";
+            const res = await fetch("/ask-agent", {
+              method: "POST",
+              headers: {"Content-Type": "application/json"},
+              body: JSON.stringify({ prompt })
+            });
+            const data = await res.json();
+            document.getElementById("response").innerText = data.response;
+          };
+        </script>
+      </body>
+    </html>
+    """
+
+@app.post("/ask-agent")
+async def ask_agent(request: Request):
+    data = await request.json()
+    user_prompt = data.get("prompt", "")
+
+    response = ""
+    async with budget_agent.run_stream(user_prompt) as result:
+        async for message in result.stream_text(delta=True):
+            response += message
+    return {"response": response}
 
 @app.get("/budgets")
 def list_budgets():
-    return ynab.get_budgets()
+    return ynab.get_all_budgets()
 
 @app.get("/budgets/{budget_id}")
 def get_budget(budget_id: str):
