@@ -2,3 +2,4 @@
 /__pycache__
 /cached_transactions.json
 /venv
+chat_history.db

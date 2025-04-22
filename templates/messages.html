@@ -1,0 +1,5 @@
+{% for entry in chat_history %}
+  <p><strong>You:</strong> {{ entry.prompt }}</p>
+  <p><strong>Agent:</strong> {{ entry.response }}</p>
+  <hr>
+{% endfor %}

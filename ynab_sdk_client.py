@@ -1,6 +1,8 @@
 import os
 from dotenv import load_dotenv
 from ynab import Configuration, ApiClient, BudgetsApi, TransactionsApi, AccountsApi
+from datetime import datetime, timedelta
+import json
 
 load_dotenv()
 ACCESS_TOKEN = os.getenv("YNAB_TOKEN")
@@ -28,4 +30,35 @@ class YNABSdkClient:
         return self.accounts_api.get_accounts(budget_id).data.accounts
 
     def get_transactions(self, budget_id, since_date=None):
-        return self.transactions_api.get_transactions(budget_id, since_date).data.transactions
+        """Get transactions from YNAB API.  Check for local cache first and 
+           create cache with results if not already present.
+           Return from cache or API depending on whether TTL has been exceeded"""
+        
+        CACHE_FILE = "cached_transactions.json"
+        CACHE_TTL_HOURS = 12
+        client = YNABSdkClient()
+
+        if not os.path.exists(CACHE_FILE):
+            budget_id = client.get_first_budget_id()
+            transactions = client.get_transactions(budget_id)
+            with open(CACHE_FILE, "w") as f:
+                json.dump({
+                "fetched_at": datetime.now().isoformat(),
+                "transactions": [t.to_dict() for t in transactions]
+                }, f, indent=2)
+                return [t.to_dict() for t in transactions]
+            
+        with open(CACHE_FILE, "r") as f:
+            data = json.load(f)
+            timestamp = datetime.fromisoformat(data.get("fetched_at"))
+            if datetime.now() - timestamp > timedelta(hours=CACHE_TTL_HOURS):
+                budget_id = client.get_first_budget_id()
+                transactions = client.get_transactions(budget_id)
+                # yes yes, I know, just this once I can enjoy typing =/
+                with open(CACHE_FILE, "w") as f:
+                    json.dump({
+                    "fetched_at": datetime.now().isoformat(),
+                    "transactions": [t.to_dict() for t in transactions]
+                    }, f, indent=2)
+                return [t.to_dict() for t in transactions]
+            return data.get("transactions")

@@ -1,0 +1,105 @@
+# main.py
+import logging
+logger = logging.getLogger("uvicorn.error")
+from fastapi import FastAPI, Request, Form
+from fastapi.responses import HTMLResponse, StreamingResponse
+from fastapi.templating import Jinja2Templates
+from fastapi.staticfiles import StaticFiles
+from agents.budget_agent import budget_agent
+import uvicorn
+import sqlite3
+from pathlib import Path
+import asyncio
+
+# --- Template Setup ---
+templates = Jinja2Templates(directory="templates")
+app = FastAPI()
+app.mount("/static", StaticFiles(directory="static"), name="static")
+
+DB_PATH = Path("chat_history.db")
+
+def init_db():
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS messages (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            prompt TEXT NOT NULL,
+            response TEXT NOT NULL,
+            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+    conn.commit()
+    conn.close()
+
+def store_message(prompt: str, response: str):
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("INSERT INTO messages (prompt, response) VALUES (?, ?)", (prompt, response))
+    conn.commit()
+    conn.close()
+
+def load_recent_messages(limit=10):
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("SELECT prompt, response FROM messages ORDER BY id DESC LIMIT ?", (limit,))
+    messages = [{"prompt": row[0], "response": row[1]} for row in reversed(c.fetchall())]
+    conn.close()
+    return messages
+
+@app.on_event("startup")
+async def startup():
+    init_db()
+    logger.info("[INIT] Budget Buddy (SSE) startup complete.")
+
+@app.get("/", response_class=HTMLResponse)
+async def index(request: Request):
+    chat_history = load_recent_messages()
+    return templates.TemplateResponse("chat.html", {"request": request, "chat_history": chat_history})
+
+@app.post("/htmx-chat", response_class=HTMLResponse)
+async def htmx_chat(request: Request, prompt: str = Form(...)):
+    # Create a placeholder row to track the incoming message
+    store_message(prompt, "...")  # you could return an ID here if desired
+    return HTMLResponse("<p><strong>You:</strong> {}</p><p><strong>Agent:</strong><br><em>Loading...</em></p>".format(prompt))
+
+@app.get("/sse")
+async def sse(prompt: str):
+    logger.info(f"[SSE] Incoming stream request with prompt: {prompt}")
+    async def event_stream():
+        logger.info("[SSE] Stream started")
+        full_response = ""
+        yield "retry: 60000\n\n"
+        yield "data: [OPEN]\n\n"
+        async with budget_agent.run_stream(prompt) as result:
+            async for token in result.stream_text(delta=True):
+                logger.info(f"[SSE] Token received: {repr(token)}")
+                safe_token = token.replace('\n', '<br>')
+                yield f"data: {safe_token}\n\n"
+                full_response += token
+                await asyncio.sleep(0.01)
+        logger.info("[SSE] Full response assembled, storing...")
+        store_message(prompt, full_response)
+        yield "data: [DONE]\n\n"
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+@app.get("/sse-test")
+async def sse_test():
+    async def event_stream():
+        yield "data: Hello from plain test\n\n"
+        await asyncio.sleep(0.5)
+        yield "data: This is a working stream\n\n"
+        await asyncio.sleep(0.5)
+        yield "data: Done\n\n"
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+# Optional CLI testing
+async def main():
+    user_prompt = "What accounts are tied to my budget right now?"
+    async with budget_agent.run_stream(user_prompt) as result:
+        async for message in result.stream_text(delta=True):
+            for char in message:
+                print(char, end="", flush=True)
+
+if __name__ == "__main__":
+    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
