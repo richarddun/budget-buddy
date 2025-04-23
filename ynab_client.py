@@ -1,3 +1,4 @@
+#Deprecated, keeping for reference only
 import requests
 import os
 from dotenv import load_dotenv

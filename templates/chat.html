@@ -3,6 +3,7 @@
 <head>
   <title>Budget Chat (Vanilla SSE)</title>
   <script src="https://unpkg.com/htmx.org@1.9.2"></script>
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
   <style>
     body { font-family: sans-serif; margin: 2em; background: #f8f8ff; }
     .chatbox { border: 1px solid #ccc; padding: 1em; margin-bottom: 1em; height: 400px; overflow-y: auto; background: #fff; border-radius: 6px; }
@@ -25,32 +26,38 @@
     <button type="submit">Send</button>
   </form>
 
-  <script>
-    document.body.addEventListener('htmx:afterSwap', function (evt) {
-      if (evt.detail.target.id === "chatbox") {
-        const prompt = document.getElementById('prompt').value;
-        const chatbox = document.getElementById('chatbox');
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<script>
+  document.body.addEventListener('htmx:afterSwap', function (evt) {
+    if (evt.detail.target.id === "chatbox") {
+      const prompt = document.getElementById('prompt').value;
+      const chatbox = document.getElementById('chatbox');
+      const span = document.getElementById("stream-content");
 
-        // Append stream placeholder into chatbox
-        const span = document.createElement("span");
-        span.id = "stream-content";
-        span.innerHTML = "<em>Loading...</em>";
-        chatbox.appendChild(span);
+      if (!span) return; // Don't stream if there's no placeholder
 
-        const source = new EventSource(`/sse?prompt=${encodeURIComponent(prompt)}`);
-        console.log("[SSE] Stream opened");
+      let firstToken = true;
+      const source = new EventSource(`/sse?prompt=${encodeURIComponent(prompt)}`);
+      console.log("[SSE] Stream opened");
 
-        source.onmessage = (e) => {
-          console.log("[SSE] Message:", e.data);
-          span.innerHTML = span.innerHTML === "<em>Loading...</em>" ? e.data : span.innerHTML + e.data;
-        };
+      source.onmessage = (e) => {
+        console.log("[SSE] Message:", e.data);
+        if (firstToken) {
+          span.innerHTML = marked.parse(e.data);
+          firstToken = false;
+        } else {
+          span.innerHTML += marked.parse(e.data);
+        }
+        chatbox.scrollTop = chatbox.scrollHeight;
+      };
 
-        source.onerror = (err) => {
-          console.error("[SSE] Stream error:", err);
-          source.close();
-        };
-      }
-    });
-  </script>
+      source.onerror = (err) => {
+        console.error("[SSE] Stream error:", err);
+        source.close();
+      };
+    }
+  });
+</script>
+
 </body>
 </html>
