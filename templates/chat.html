@@ -27,6 +27,10 @@
   </form>
 
 <script>
+  /*$.each($("span md"), (function(index,element) {
+      element.textContent = marked.parse(element.textContent)
+  })); */
+
   document.body.addEventListener('htmx:afterSwap', function (evt) {
     if (evt.detail.target.id === "chatbox") {
       const promptInput = document.getElementById('prompt');

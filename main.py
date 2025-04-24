@@ -7,6 +7,7 @@ from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
 from agents.budget_agent import budget_agent
 import uvicorn
+import html
 import sqlite3
 from pathlib import Path
 import asyncio
@@ -43,7 +44,7 @@ def load_recent_messages(limit=10):
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute("SELECT prompt, response FROM messages ORDER BY id DESC LIMIT ?", (limit,))
-    messages = [{"prompt": row[0], "response": row[1]} for row in reversed(c.fetchall())]
+    messages = [{"prompt": row[0], "response": html.unescape(row[1])} for row in reversed(c.fetchall())]
     conn.close()
     return messages
 
@@ -82,7 +83,7 @@ async def sse(prompt: str):
                 logger.info(f"[SSE] Token received: {repr(token)}")
                 safe_token = token.replace('\n', '<br>')
                 yield f"event: message{lnbrk}data: {safe_token}{lnbrk}{lnbrk}"
-                full_response += token
+                full_response += safe_token
                 await asyncio.sleep(0.01)
         logger.info("[SSE] Full response assembled, storing...")
         store_message(prompt, full_response)
