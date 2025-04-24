@@ -5,7 +5,7 @@ from pathlib import Path
 import os
 from dotenv import load_dotenv
 from ynab import Configuration, ApiClient, BudgetsApi, TransactionsApi, AccountsApi
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 import json
 import logging
 logger = logging.getLogger("uvicorn.error")
@@ -14,7 +14,6 @@ load_dotenv()
 
 class YNABSdkClient:
     # 🔹 Class-level constants (shared across all instances)
-    CACHE_FILE = "cached_transactions.json"
     CACHE_TTL_HOURS = 12
 
     def __init__(self):
@@ -56,11 +55,13 @@ class YNABSdkClient:
     def _save_cache(self, key, value):
         path = self._get_cache_path(key)
         path.parent.mkdir(parents=True, exist_ok=True)
-        with open(path, "w") as f:
+        tmp_path = path.with_suffix(".tmp")
+        with open(tmp_path, "w") as f:
             json.dump({
                 "fetched_at": datetime.now().isoformat(),
                 "value": value
             }, f, indent=2)
+        os.replace(tmp_path, path)  # atomic replacement
 
     def cacheable(self, func):
         def wrapper(*args, **kwargs):
@@ -94,6 +95,8 @@ class YNABSdkClient:
                     euro_val = round(v / 1000.0, 2)
                     new_obj[k] = euro_val
                     new_obj[f"{k}_display"] = f"€{euro_val:,.2f}"
+                elif isinstance(v, (datetime,date)):
+                    new_obj[k] = v.isoformat()
                 else:
                     new_obj[k] = self._normalize_currency_fields(v)
             return new_obj
@@ -107,30 +110,21 @@ class YNABSdkClient:
     def _fetch_and_cache_transactions(self, budget_id, since_date=None):
         transactions = self.transactions_api.get_transactions(budget_id, since_date).data.transactions
         txns_dict = [t.to_dict() for t in transactions]
-        with open(self.CACHE_FILE, "w") as f:
-            json.dump({
-                "fetched_at": datetime.now().isoformat(),
-                "transactions": txns_dict
-            }, f, indent=2)
-        return txns_dict
-
-    def _cache_expired(self):
-        if not os.path.exists(self.CACHE_FILE):
-            return True
-        with open(self.CACHE_FILE, "r") as f:
-            data = json.load(f)
-        timestamp = datetime.fromisoformat(data.get("fetched_at"))
-        return datetime.now() - timestamp > timedelta(hours=self.CACHE_TTL_HOURS)
+        normalized = self._normalize_currency_fields(txns_dict)
+        key = self._cache_key("get_transactions", (budget_id, since_date), {})
+        self._save_cache(key, normalized)
+        return normalized
 
     # 🔸 Public method that uses caching
     def get_transactions(self, budget_id, since_date=None):
-        if self._cache_expired():
-            transactions = self._fetch_and_cache_transactions(budget_id, since_date)
-        else:
-            with open(self.CACHE_FILE, "r") as f:
-                data = json.load(f)
-                transactions = data.get("transactions")
-        return self._normalize_currency_fields(transactions) # convert amounts from milliunits 
+        key = self._cache_key("get_transactions", (budget_id, since_date), {})
+        cached = self._load_cache(key)
+        if cached is not None:
+            logger.info(f"[CACHE HIT] get_transactions")
+            return cached
+        logger.info(f"[CACHE MISS] get_transactions")
+        return self._fetch_and_cache_transactions(budget_id, since_date)
+
 
     def _get_budget_details_uncached(self, budget_id):
         raw_budget = self.budgets_api.get_budget_by_id(budget_id).data.budget
@@ -138,6 +132,4 @@ class YNABSdkClient:
 
     def get_accounts(self, budget_id):
         return self._normalize_currency_fields([a.to_dict() for a in self.accounts_api.get_accounts(budget_id).data.accounts])
-
-
 

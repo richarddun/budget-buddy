@@ -95,6 +95,21 @@ button[type="submit"] {
 button[type="submit"]:hover {
   background-color: #3455aa;
 }
+/* print view */
+@media print {
+  #sidebar, form, button {
+    display: none !important;
+  }
+  body {
+    background: white !important;
+    color: black !important;
+  }
+  .chatbox {
+    border: none;
+    padding: 0;
+    background: white;
+  }
+}
 
 /* Desktop overrides */
 @media (min-width: 769px) {
@@ -124,6 +139,10 @@ button[type="submit"]:hover {
     <button onclick="setPrompt('Health check on my budget')">Health check</button>
     <button onclick="setPrompt('Which categories are overspent?')">Overspent categories</button>
     <button onclick="setPrompt('Any upcoming scheduled transactions?')">Upcoming transactions</button>
+    <h2>Reset session</h2>
+    <button onclick="startNewSession()">🧼 New Session</button>
+    <h2>Export chat</h2>
+    <button onclick="window.print()">🖨️ Export as PDF</button>
   </div>
 
   <div id="main">
@@ -180,6 +199,43 @@ button[type="submit"]:hover {
       this.style.height = 'auto';
       this.style.height = (this.scrollHeight) + 'px';
     });
+
+    document.getElementById("prompt").addEventListener("keydown", function (event) {
+      // If Enter is pressed *without* Shift, submit the form
+      if (event.key === "Enter" && !event.shiftKey) {
+        event.preventDefault();  // prevent newline
+        document.getElementById("chat-form").dispatchEvent(new Event("submit", { cancelable: true }));
+      }
+    });
+    function startNewSession() {
+      if (!confirm("Are you sure you want to clear the chat history?")) return;
+
+      fetch("/reset-session", {
+        method: "POST"
+      })
+        .then(response => response.json())
+        .then(data => {
+          console.log("[SESSION RESET]", data.message);
+          // Soft feedback delay (optional)
+          setTimeout(() => {
+            location.reload();  // Full reload of the page
+          }, 300);  // You can remove this delay or tweak it
+        })
+        .catch(err => {
+          console.error("Error resetting session:", err);
+          alert("Something went wrong trying to reset the session.");
+        });
+    }
+    function printChat() {
+      const today = new Date().toISOString().split("T")[0];
+      document.title = `Budget Buddy - chat snapshot taken on ${today}`;
+      document.getElementById("chatbox").scrollIntoView({ behavior: "smooth" });
+      setTimeout(() => {
+        window.print();
+      }, 500);  // small delay for scroll
+    }
+
+
   </script>
 </body>
 </html>

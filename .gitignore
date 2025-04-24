@@ -1,5 +1,7 @@
 /.env
 /__pycache__
-/cached_transactions.json
 /venv
-chat_history.db
+*.json
+*.db
+*.pyc
+agents/__pycache__/budget_agent.cpython-311.pyc

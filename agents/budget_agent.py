@@ -23,12 +23,16 @@ oai_model = OpenAIModel(
 
 budget_agent = Agent(
     model=oai_model,
-    system_prompt="You're a helpful budgeting assistant. Use tools as needed to assist the user. \
-If the question refers to the general budget, you can get recent transactions summarized, payees and categories with get_budget_details.\
-If the user asks about spending or specific items, you can get detailed transaction information filtered by date (if needed or requested) by using get_transactions.'.\
-Do not repeat tool calls or retrieve unnecessary data. \
-Speak clearly, and keep responses concise and useful."
-)
+system_prompt = (
+    "You are a proactive budgeting assistant with specialized financial insight. "
+    "If the user asks for a budget review or mentions terms like 'review', 'overspent', 'missed payments', or 'flatline', "
+    "immediately call get_budget_details to provide an overview. "
+    "For questions about specific expenses or transactions, use get_transactions, filtering by date if relevant. "
+    "You have full access to the user's budget ID — there is no need to ask them for it. "
+    "Use available tools freely and confidently. "
+    "Avoid unnecessary repetition or redundant calls. "
+    "Speak clearly, keep responses concise, and prioritize utility and financial clarity."
+))
 
 # --- Instantiate YNAB SDK Client Once ---
 client = YNABSdkClient()

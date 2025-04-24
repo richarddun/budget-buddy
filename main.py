@@ -46,6 +46,12 @@ def store_message(prompt: str, response: str):
     conn.commit()
     conn.close()
 
+def format_chat_history(limit=10):
+    history = load_recent_messages(limit)
+    return "\n".join([
+        f"You: {m['prompt']}\nAgent: {m['response']}" for m in history
+    ])
+
 def load_recent_messages(limit=10):
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
@@ -79,9 +85,15 @@ async def htmx_chat(request: Request, prompt: str = Form(...)):
     """)
 
 @app.get("/sse")
-async def sse(prompt: str):
+async def sse(prompt: str, fresh: bool = False):
     logger.info(f"[SSE] Incoming stream request with prompt: {prompt}")
-    logger.info(f"[SSE] Handling prompt: {prompt}")
+
+    if not fresh:
+        history_context = format_chat_history(limit=10)
+        prompt = f"{history_context}\nYou: {prompt}"
+
+    logger.info(f"[SSE] Final prompt sent to agent: {repr(prompt[:120])}...")
+
     async def event_stream():
         logger.info("[SSE] Stream started")
         full_response = ""
@@ -98,7 +110,19 @@ async def sse(prompt: str):
         logger.info("[SSE] Full response assembled, storing...")
         store_message(prompt, full_response)
         yield "event: done"
+
     return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+@app.post("/reset-session")
+async def reset_session():
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute("DELETE FROM messages")
+    conn.commit()
+    conn.close()
+    logger.info("[SESSION] Chat history cleared.")
+    return {"status": "ok", "message": "Session reset."}
+
 
 @app.get("/sse-test")
 async def sse_test():
