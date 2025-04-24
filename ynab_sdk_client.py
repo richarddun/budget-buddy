@@ -1,8 +1,14 @@
+import hashlib
+import shutil
+import json
+from pathlib import Path
 import os
 from dotenv import load_dotenv
 from ynab import Configuration, ApiClient, BudgetsApi, TransactionsApi, AccountsApi
 from datetime import datetime, timedelta
 import json
+import logging
+logger = logging.getLogger("uvicorn.error")
 
 load_dotenv()
 
@@ -21,6 +27,56 @@ class YNABSdkClient:
         self.budgets_api = BudgetsApi(self.api_client)
         self.transactions_api = TransactionsApi(self.api_client)
         self.accounts_api = AccountsApi(self.api_client)
+        self.get_accounts = self.cacheable(self.get_accounts)
+        self.get_budget_details = self.cacheable(self._get_budget_details_uncached)
+        self.get_transactions = self.cacheable(self.get_transactions)
+
+    def _cache_key(self, func_name, args, kwargs):
+        raw = json.dumps({
+            "func": func_name,
+            "args": args,
+            "kwargs": kwargs
+        }, sort_keys=True)
+        return hashlib.sha256(raw.encode()).hexdigest()
+
+    def _get_cache_path(self, key):
+        return Path(f".ynab_cache/{key}.json")
+
+    def _load_cache(self, key):
+        path = self._get_cache_path(key)
+        if not path.exists():
+            return None
+        with open(path, "r") as f:
+            data = json.load(f)
+        timestamp = datetime.fromisoformat(data["fetched_at"])
+        if datetime.now() - timestamp > timedelta(hours=self.CACHE_TTL_HOURS):
+            return None
+        return data["value"]
+
+    def _save_cache(self, key, value):
+        path = self._get_cache_path(key)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path, "w") as f:
+            json.dump({
+                "fetched_at": datetime.now().isoformat(),
+                "value": value
+            }, f, indent=2)
+
+    def cacheable(self, func):
+        def wrapper(*args, **kwargs):
+            key = self._cache_key(func.__name__, args, kwargs)
+            cached = self._load_cache(key)
+            if cached is not None:
+                logger.info(f"[CACHE HIT] {func.__name__}")
+                return cached
+            logger.info(f"[CACHE MISS] {func.__name__}")
+            result = func(*args, **kwargs)
+            self._save_cache(key, result)
+            return result
+        return wrapper
+
+    def clear_cache(self):
+        shutil.rmtree(".ynab_cache", ignore_errors=True)
 
     def _normalize_currency_fields(self, obj):
         """
@@ -46,7 +102,6 @@ class YNABSdkClient:
             return [self._normalize_currency_fields(i) for i in obj]
 
         return obj
-
 
     # 🔸 Private utility for fetching fresh data and updating cache
     def _fetch_and_cache_transactions(self, budget_id, since_date=None):
@@ -77,7 +132,7 @@ class YNABSdkClient:
                 transactions = data.get("transactions")
         return self._normalize_currency_fields(transactions) # convert amounts from milliunits 
 
-    def get_budget_details(self, budget_id):
+    def _get_budget_details_uncached(self, budget_id):
         raw_budget = self.budgets_api.get_budget_by_id(budget_id).data.budget
         return self._normalize_currency_fields(raw_budget.to_dict())
 
