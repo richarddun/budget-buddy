@@ -22,15 +22,31 @@ class YNABSdkClient:
         self.transactions_api = TransactionsApi(self.api_client)
         self.accounts_api = AccountsApi(self.api_client)
 
-    # 🔸 Public method that uses caching
-    def get_transactions(self, budget_id, since_date=None):
-        if self._cache_expired():
-            transactions = self._fetch_and_cache_transactions(budget_id, since_date)
-        else:
-            with open(self.CACHE_FILE, "r") as f:
-                data = json.load(f)
-                transactions = data.get("transactions")
-        return transactions
+    def _normalize_currency_fields(self, obj):
+        """
+        Recursively normalize all relevant milliunit fields:
+        - Replace raw integer with float euros (2 decimal places)
+        - Add a 'display' key like 'amount_display': '€123.45'
+        """
+        currency_keywords = ["amount", "balance", "goal", "budgeted", "activity", "value"]
+
+        if isinstance(obj, dict):
+            new_obj = {}
+            for k, v in obj.items():
+                lowered = k.lower()
+                if isinstance(v, int) and any(kw in lowered for kw in currency_keywords):
+                    euro_val = round(v / 1000.0, 2)
+                    new_obj[k] = euro_val
+                    new_obj[f"{k}_display"] = f"€{euro_val:,.2f}"
+                else:
+                    new_obj[k] = self._normalize_currency_fields(v)
+            return new_obj
+
+        elif isinstance(obj, list):
+            return [self._normalize_currency_fields(i) for i in obj]
+
+        return obj
+
 
     # 🔸 Private utility for fetching fresh data and updating cache
     def _fetch_and_cache_transactions(self, budget_id, since_date=None):
@@ -51,11 +67,22 @@ class YNABSdkClient:
         timestamp = datetime.fromisoformat(data.get("fetched_at"))
         return datetime.now() - timestamp > timedelta(hours=self.CACHE_TTL_HOURS)
 
+    # 🔸 Public method that uses caching
+    def get_transactions(self, budget_id, since_date=None):
+        if self._cache_expired():
+            transactions = self._fetch_and_cache_transactions(budget_id, since_date)
+        else:
+            with open(self.CACHE_FILE, "r") as f:
+                data = json.load(f)
+                transactions = data.get("transactions")
+        return self._normalize_currency_fields(transactions) # convert amounts from milliunits 
 
     def get_budget_details(self, budget_id):
-        return self.budgets_api.get_budget_by_id(budget_id).data.budget
+        raw_budget = self.budgets_api.get_budget_by_id(budget_id).data.budget
+        return self._normalize_currency_fields(raw_budget.to_dict())
 
     def get_accounts(self, budget_id):
-        return self.accounts_api.get_accounts(budget_id).data.accounts
+        return self._normalize_currency_fields([a.to_dict() for a in self.accounts_api.get_accounts(budget_id).data.accounts])
+
 
 

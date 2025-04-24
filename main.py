@@ -11,6 +11,10 @@ import html
 import sqlite3
 from pathlib import Path
 import asyncio
+from ynab_sdk_client import YNABSdkClient as ynab
+import os
+from dotenv import load_dotenv
+load_dotenv()
 
 # --- Template Setup ---
 templates = Jinja2Templates(directory="templates")
@@ -32,6 +36,8 @@ def init_db():
     ''')
     conn.commit()
     conn.close()
+
+BUDGET_ID = os.getenv("YNAB_BUDGET_ID")
 
 def store_message(prompt: str, response: str):
     conn = sqlite3.connect(DB_PATH)
@@ -58,6 +64,10 @@ async def index(request: Request):
     chat_history = load_recent_messages()
     return templates.TemplateResponse("chat.html", {"request": request, "chat_history": chat_history})
 
+@app.get("/budgets")
+def get_budget():
+    buddy = ynab()
+    return buddy.get_budget_details(BUDGET_ID)
 
 @app.post("/htmx-chat", response_class=HTMLResponse)
 async def htmx_chat(request: Request, prompt: str = Form(...)):

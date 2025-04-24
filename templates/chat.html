@@ -2,68 +2,184 @@
 <html>
 <head>
   <title>Budget Chat (Vanilla SSE)</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <script src="https://unpkg.com/htmx.org@1.9.2"></script>
   <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
   <script src="https://code.jquery.com/jquery-3.7.1.min.js" integrity="sha256-/JqT3SQfawRcv/BIHPThkBvs0OEvtFFmqPF/lYI/Cxo=" crossorigin="anonymous"></script>
   <style>
-    body { font-family: sans-serif; margin: 2em; background: #f8f8ff; }
-    .chatbox { border: 1px solid #ccc; padding: 1em; margin-bottom: 1em; height: 70vh; overflow-y: auto; background: #fff; border-radius: 6px; }
-    input {flex: 1;padding: 0.75em;font-size: 1.1em;border-radius: 4px;border: 1px solid #ccc;width: 90%;}
-    button { padding: 0.5em 1em; font-size: 1em; border-radius: 4px; border: none; background-color: #3367d6; color: white; cursor: pointer; }
-    button:hover { background-color: #264aa4; }
-    hr { border: 0; height: 1px; background: #ddd; margin: 1em 0; }
+* {
+  box-sizing: border-box;
+}
+
+body {
+  font-family: 'Segoe UI', sans-serif;
+  margin: 0;
+  background: #1e1e2f;
+  color: #ddd;
+  display: flex;
+  flex-direction: column; /* mobile-first: stacked layout */
+  min-height: 100vh;
+}
+
+#sidebar {
+  background: #2e2e3e;
+  padding: 1em;
+  overflow-y: auto;
+  width: 100%; /* full width on mobile */
+  border-bottom: 1px solid #444;
+}
+
+#sidebar h2 {
+  font-size: 1.2em;
+  margin-top: 0;
+  color: #fff;
+}
+
+#sidebar button {
+  display: block;
+  width: 100%;
+  margin: 0.5em 0;
+  background-color: #444;
+  border: none;
+  color: #ddd;
+  padding: 0.5em;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+#sidebar button:hover {
+  background-color: #555;
+}
+
+#main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  padding: 1em;
+  overflow-y: auto;
+}
+
+.chatbox {
+  flex: 1;
+  border: 1px solid #444;
+  padding: 1em;
+  overflow-y: auto;
+  background: #2b2b3d;
+  border-radius: 6px;
+  margin-bottom: 1em;
+}
+
+textarea {
+  flex: 1;
+  padding: 0.75em;
+  font-size: 1em;
+  border-radius: 4px;
+  border: 1px solid #555;
+  width: 100%;
+  background: #1e1e2f;
+  color: #eee;
+  resize: none;
+}
+
+button[type="submit"] {
+  margin-top: 0.5em;
+  padding: 0.6em 1.2em;
+  font-size: 1em;
+  border-radius: 4px;
+  border: none;
+  background-color: #4477dd;
+  color: white;
+  cursor: pointer;
+}
+
+button[type="submit"]:hover {
+  background-color: #3455aa;
+}
+
+/* Desktop overrides */
+@media (min-width: 769px) {
+  body {
+    flex-direction: row; /* restore sidebar on left */
+  }
+
+  #sidebar {
+    width: 250px;
+    border-right: 1px solid #444;
+    border-bottom: none;
+  }
+
+  #main {
+    height: 100vh;
+    overflow: hidden;
+  }
+}
+
   </style>
 </head>
 <body>
-  <h1>💬 Budget Chat</h1>
 
-  <div id="chatbox" class="chatbox">
-    {% include 'messages.html' %}
+  <div id="sidebar">
+    <h2>Quick Prompts</h2>
+    <button onclick="setPrompt('What are my most recent transactions?')">Most recent transactions</button>
+    <button onclick="setPrompt('Health check on my budget')">Health check</button>
+    <button onclick="setPrompt('Which categories are overspent?')">Overspent categories</button>
+    <button onclick="setPrompt('Any upcoming scheduled transactions?')">Upcoming transactions</button>
   </div>
 
-  <form id="chat-form" hx-post="/htmx-chat" hx-target="#chatbox" hx-swap="beforeend">
-    <input type="text" name="prompt" id="prompt" placeholder="Ask something..." autocomplete="off" required>
-    <button type="submit">Send</button>
-  </form>
+  <div id="main">
+    <h1>💬 Budget Chat</h1>
 
-<script>
-  /*$.each($("span md"), (function(index,element) {
-      element.textContent = marked.parse(element.textContent)
-  })); */
+    <div id="chatbox" class="chatbox">
+      {% include 'messages.html' %}
+    </div>
 
-  document.body.addEventListener('htmx:afterSwap', function (evt) {
-    if (evt.detail.target.id === "chatbox") {
+    <form id="chat-form" hx-post="/htmx-chat" hx-target="#chatbox" hx-swap="beforeend">
+      <textarea name="prompt" id="prompt" placeholder="Ask something..." autocomplete="off" rows="2" required></textarea><br>
+      <button type="submit">Send</button>
+    </form>
+  </div>
+
+  <script>
+    function setPrompt(text) {
       const promptInput = document.getElementById('prompt');
-      const prompt = promptInput.value;
-      promptInput.value = ""; // Clear input
-      const chatbox = document.getElementById('chatbox');
-
-      const spans = document.querySelectorAll("#chatbox span");
-      const span = spans[spans.length - 1];
-      if (!span) return;
-
-      let fullMessage = "";
-      const source = new EventSource(`/sse?prompt=${encodeURIComponent(prompt)}`);
-      console.log("[SSE] Stream opened");
-
-      source.onmessage = (e) => {
-        console.log("[SSE] Message:", e.data);
-        fullMessage += e.data;
-        span.innerHTML = fullMessage;
-        chatbox.scrollTop = chatbox.scrollHeight;
-      };
-
-      source.onerror = (err) => {
-        console.error("[SSE] Stream error:", err);
-        span.innerHTML = marked.parse(fullMessage);
-        source.close();
-      };
+      promptInput.value = text;
+      promptInput.focus();
     }
-  });
-</script>
 
+    document.body.addEventListener('htmx:afterSwap', function (evt) {
+      if (evt.detail.target.id === "chatbox") {
+        const promptInput = document.getElementById('prompt');
+        const prompt = promptInput.value;
+        promptInput.value = ""; // Clear input
+        const chatbox = document.getElementById('chatbox');
 
+        const spans = document.querySelectorAll("#chatbox span");
+        const span = spans[spans.length - 1];
+        if (!span) return;
 
+        let fullMessage = "";
+        const source = new EventSource(`/sse?prompt=${encodeURIComponent(prompt)}`);
+        console.log("[SSE] Stream opened");
 
+        source.onmessage = (e) => {
+          console.log("[SSE] Message:", e.data);
+          fullMessage += e.data;
+          span.innerHTML = fullMessage;
+          chatbox.scrollTop = chatbox.scrollHeight;
+        };
+
+        source.onerror = (err) => {
+          console.error("[SSE] Stream error:", err);
+          span.innerHTML = marked.parse(fullMessage);
+          source.close();
+        };
+      }
+    });
+
+    document.getElementById('prompt').addEventListener('input', function () {
+      this.style.height = 'auto';
+      this.style.height = (this.scrollHeight) + 'px';
+    });
+  </script>
 </body>
 </html>
