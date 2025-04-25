@@ -1,13 +1,16 @@
 from pydantic_ai import Agent
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from pydantic_ai.models.openai import OpenAIModel
 from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_ai import Agent
 import time
 import asyncio
 import os
+from datetime import date
+from typing import Optional
 from dotenv import load_dotenv
 from ynab_sdk_client import YNABSdkClient  # your wrapper
+from ynab.models import PostScheduledTransactionWrapper, SaveScheduledTransaction
 import logging
 logger = logging.getLogger("uvicorn.error")
 
@@ -29,6 +32,7 @@ system_prompt = (
     "immediately call get_budget_details to provide an overview. "
     "For questions about specific expenses or transactions, use get_transactions, filtering by date if relevant. "
     "You have full access to the user's budget ID — there is no need to ask them for it. "
+    "To create an expected upcoming transaction (e.g., a monthly bill, recurring charge), use create_scheduled_transaction. Supply account ID, date, and amount. Optionally include payee name or category."
     "Use available tools freely and confidently. "
     "Avoid unnecessary repetition or redundant calls. "
     "Speak clearly, keep responses concise, and prioritize utility and financial clarity."
@@ -64,6 +68,62 @@ def get_transactions(input: GetTransactionsInput):
     """Retrieve transactions for a budget, optionally since a specific date."""
     logger.info(f"[TOOL] get_transactions called with budget_id={BUDGET_ID}, since_date={input.since_date}")
     return client.get_transactions(BUDGET_ID, input.since_date)
+
+class GetAllScheduledTransactionsInput(BaseModel):
+    budget_id: str
+
+@budget_agent.tool_plain
+def get_all_scheduled_transactions(input: GetAllScheduledTransactionsInput):
+    """Retrieve a list of all scheduled transactions from the budget.  Useful to see upcoming costs"""
+    logger.info(f"[TOOL] get_all_scheduled_transactions called with budget_id={BUDGET_ID}")
+    return client.get_scheduled_transactions(BUDGET_ID)
+
+class CreateScheduledTransactionInput(BaseModel):
+    account_id: str
+    var_date: date
+    amount_eur: float  # now type-safe, thanks to validator
+    payee_id: Optional[str] = None
+    payee_name: Optional[str] = None
+    category_id: Optional[str] = None
+    memo: Optional[str] = None
+    flag_color: Optional[str] = None
+    frequency: Optional[str] = None
+
+    @field_validator('amount_eur', mode='before')
+    @classmethod
+    def parse_amount_eur(cls, v):
+        if isinstance(v, (int, float)):
+            return float(v)
+        try:
+            cleaned = str(v).replace("€", "").replace(",", "").strip()
+            return float(cleaned)
+        except Exception as e:
+            raise ValueError(f"Could not parse amount_eur: {v} ({e})")
+
+
+@budget_agent.tool_plain
+def create_scheduled_transaction(input: CreateScheduledTransactionInput):
+    """Create a scheduled transaction for a future recurring payment or event."""
+    logger.info(f"[TOOL] Creating scheduled transaction on account {input.account_id} for €{input.amount_eur} on {input.var_date}")
+
+    amount_milliunits = int(input.amount_eur * 1000)
+
+    detail = SaveScheduledTransaction(
+        account_id=input.account_id,
+        date=input.var_date,
+        amount=amount_milliunits,
+        payee_id=input.payee_id,
+        payee_name=input.payee_name,
+        category_id=input.category_id,
+        memo=input.memo,
+        flag_color=input.flag_color,
+        frequency=input.frequency
+    )
+
+    wrapper = PostScheduledTransactionWrapper(scheduled_transaction=detail)
+    response = client.create_scheduled_transaction(BUDGET_ID, wrapper)
+    return response.to_dict()
+
 
 #class GetFirstBudgetIdInput(BaseModel):
 #    pass

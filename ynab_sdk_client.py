@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 import os
 from dotenv import load_dotenv
-from ynab import Configuration, ApiClient, BudgetsApi, TransactionsApi, AccountsApi
+from ynab import Configuration, ApiClient, BudgetsApi, TransactionsApi, AccountsApi, ScheduledTransactionsApi
 from datetime import datetime, timedelta, date
 import json
 import logging
@@ -22,13 +22,36 @@ class YNABSdkClient:
         self.config = Configuration(access_token=access_token)
         self.api_client = ApiClient(self.config)
 
-        # 🔸 These are bound to this client (and should remain instance-specific)
+        # 🔸 Set up the client interfaces
         self.budgets_api = BudgetsApi(self.api_client)
         self.transactions_api = TransactionsApi(self.api_client)
         self.accounts_api = AccountsApi(self.api_client)
+        self.scheduled_transactions_api = ScheduledTransactionsApi(self.api_client)
+
+        # 🔸 Read APIs (not caching scheduled_transactions at this time) 
         self.get_accounts = self.cacheable(self.get_accounts)
         self.get_budget_details = self.cacheable(self._get_budget_details_uncached)
         self.get_transactions = self.cacheable(self.get_transactions)
+
+        # 🔸 Write APIs 
+        # 
+
+
+    def _get_budget_details_uncached(self, budget_id):
+        raw_budget = self.budgets_api.get_budget_by_id(budget_id).data.budget
+        return self._normalize_currency_fields(raw_budget.to_dict())
+
+    def get_accounts(self, budget_id):
+        return self._normalize_currency_fields([a.to_dict() for a in self.accounts_api.get_accounts(budget_id).data.accounts])
+    
+    def get_scheduled_transactions(self, budget_id):
+        return self._normalize_currency_fields([a.to_dict() for a in self.scheduled_transactions_api.get_scheduled_transactions(budget_id).data.scheduled_transactions])
+
+    def create_scheduled_transaction(self, budget_id, data):
+        response = self.scheduled_transactions_api.create_scheduled_transaction(budget_id, data)
+        return self._normalize_currency_fields(response)
+
+
 
     def _cache_key(self, func_name, args, kwargs):
         raw = json.dumps({
@@ -125,11 +148,4 @@ class YNABSdkClient:
         logger.info(f"[CACHE MISS] get_transactions")
         return self._fetch_and_cache_transactions(budget_id, since_date)
 
-
-    def _get_budget_details_uncached(self, budget_id):
-        raw_budget = self.budgets_api.get_budget_by_id(budget_id).data.budget
-        return self._normalize_currency_fields(raw_budget.to_dict())
-
-    def get_accounts(self, budget_id):
-        return self._normalize_currency_fields([a.to_dict() for a in self.accounts_api.get_accounts(budget_id).data.accounts])
 
