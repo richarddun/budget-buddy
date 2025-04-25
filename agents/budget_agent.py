@@ -10,6 +10,9 @@ from datetime import date
 from typing import Optional
 from dotenv import load_dotenv
 from ynab_sdk_client import YNABSdkClient  # your wrapper
+from ynab.exceptions import ApiException
+from urllib3.exceptions import ProtocolError
+import socket
 from ynab.models import PostScheduledTransactionWrapper, SaveScheduledTransaction
 import logging
 logger = logging.getLogger("uvicorn.error")
@@ -33,6 +36,7 @@ system_prompt = (
     "For questions about specific expenses or transactions, use get_transactions, filtering by date if relevant. "
     "You have full access to the user's budget ID — there is no need to ask them for it. "
     "To create an expected upcoming transaction (e.g., a monthly bill, recurring charge), use create_scheduled_transaction. Supply account ID, date, and amount. Optionally include payee name or category."
+    "You can get all the user's scheduled transactions with get_all_scheduled_transactions"
     "Use available tools freely and confidently. "
     "Avoid unnecessary repetition or redundant calls. "
     "Speak clearly, keep responses concise, and prioritize utility and financial clarity."
@@ -65,9 +69,14 @@ class GetTransactionsInput(BaseModel):
 
 @budget_agent.tool_plain
 def get_transactions(input: GetTransactionsInput):
-    """Retrieve transactions for a budget, optionally since a specific date."""
-    logger.info(f"[TOOL] get_transactions called with budget_id={BUDGET_ID}, since_date={input.since_date}")
-    return client.get_transactions(BUDGET_ID, input.since_date)
+    try:
+        logger.info(f"[TOOL] get_transactions called with budget_id={BUDGET_ID}, since_date={input.since_date}")
+        return client.get_transactions(BUDGET_ID, input.since_date)
+    except (ApiException, ProtocolError, socket.timeout, ConnectionError) as e:
+        logger.warning(f"[TOOL ERROR] Network failure: {e}")
+        return {
+            "error": "There was a network issue contacting the YNAB API. The remote connection was closed unexpectedly. You may try again shortly or ask to continue later."
+        }
 
 class GetAllScheduledTransactionsInput(BaseModel):
     budget_id: str
