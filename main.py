@@ -89,8 +89,10 @@ async def sse(prompt: str, fresh: bool = False):
     logger.info(f"[SSE] Incoming stream request with prompt: {prompt}")
 
     if not fresh:
-        history_context = format_chat_history(limit=10)
-        prompt = f"{history_context}\nYou: {prompt}"
+        history = format_chat_history(limit=10)
+        if not prompt.strip().lower().startswith("you:"):
+            prompt = f"You: {prompt}"
+        prompt = f"{history}\n{prompt}"
 
     logger.info(f"[SSE] Final prompt sent to agent: {repr(prompt[:120])}...")
 

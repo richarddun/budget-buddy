@@ -82,12 +82,12 @@ class CreateScheduledTransactionInput(BaseModel):
     account_id: str
     var_date: date
     amount_eur: float  # now type-safe, thanks to validator
+    frequency: str = "monthly"
     payee_id: Optional[str] = None
     payee_name: Optional[str] = None
     category_id: Optional[str] = None
     memo: Optional[str] = None
     flag_color: Optional[str] = None
-    frequency: Optional[str] = None
 
     @field_validator('amount_eur', mode='before')
     @classmethod
@@ -103,7 +103,7 @@ class CreateScheduledTransactionInput(BaseModel):
 
 @budget_agent.tool_plain
 def create_scheduled_transaction(input: CreateScheduledTransactionInput):
-    """Create a scheduled transaction for a future recurring payment or event."""
+    """Create a scheduled transaction for a future recurring payment or event. Frequency, amount, date and account are required."""
     logger.info(f"[TOOL] Creating scheduled transaction on account {input.account_id} for €{input.amount_eur} on {input.var_date}")
 
     amount_milliunits = int(input.amount_eur * 1000)
