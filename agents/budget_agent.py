@@ -10,7 +10,7 @@ from datetime import date
 from typing import Optional
 from dotenv import load_dotenv
 from ynab_sdk_client import YNABSdkClient  # your wrapper
-from ynab.exceptions import ApiException
+from ynab.exceptions import ApiException, BadRequestException
 from urllib3.exceptions import ProtocolError
 import socket
 from ynab.models import PostScheduledTransactionWrapper, SaveScheduledTransaction
@@ -36,6 +36,7 @@ system_prompt = (
     "For questions about specific expenses or transactions, use get_transactions, filtering by date if relevant. "
     "You have full access to the user's budget ID — there is no need to ask them for it. "
     "To create an expected upcoming transaction (e.g., a monthly bill, recurring charge), use create_scheduled_transaction. Supply account ID, date, and amount. Optionally include payee name or category."
+    "Scheduled transactions must have dates no more than 7 days in the past and no more than 5 years into the future. If you're unsure, default to next month on the 1st."
     "You can get all the user's scheduled transactions with get_all_scheduled_transactions"
     "Use available tools freely and confidently. "
     "Avoid unnecessary repetition or redundant calls. "
@@ -128,9 +129,15 @@ def create_scheduled_transaction(input: CreateScheduledTransactionInput):
         flag_color=input.flag_color,
         frequency=input.frequency
     )
-
-    wrapper = PostScheduledTransactionWrapper(scheduled_transaction=detail)
-    response = client.create_scheduled_transaction(BUDGET_ID, wrapper)
+    try:
+        wrapper = PostScheduledTransactionWrapper(scheduled_transaction=detail)
+        response = client.create_scheduled_transaction(BUDGET_ID, wrapper)
+    except BadRequestException as e:
+        logger.warning(f"[TOOL ERROR] YNAB rejected scheduled transaction: {e}")
+        logger.warning(f"[TOOL ERROR] Payload was: {wrapper.to_dict()}")
+        return {
+            "error": "YNAB rejected the scheduled transaction — the date may be out of range. Please confirm the date is no more than 7 days in the past and not more than 5 years into the future."
+        }
     return response.to_dict()
 
 
