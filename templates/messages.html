@@ -1,5 +1,5 @@
 {% for entry in chat_history %}
-<strong>You: </strong><md><span> {{ entry.prompt.replace('You: ', '') }}</span></md><br><br>
-<strong>Agent: </strong><md><span>{{ entry.response | safe }}</span></md><br><br>
+<strong>You: </strong><span>{{ entry.prompt }}</span><br><br>
+<strong>Agent: </strong><span>{{ entry.response | safe }}</span><br><br>
   <hr>
 {% endfor %}

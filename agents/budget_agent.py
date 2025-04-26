@@ -6,7 +6,7 @@ from pydantic_ai import Agent
 import time
 import asyncio
 import os
-from datetime import date
+from datetime import date, timedelta
 from typing import Optional
 from dotenv import load_dotenv
 from ynab_sdk_client import YNABSdkClient  # your wrapper
@@ -36,6 +36,7 @@ system_prompt = (
     f"Today is {today}. When reasoning about dates, assume today's date is accurate.\n"
     "If the user asks for a budget review or mentions terms like 'review', 'overspent', 'missed payments', or 'flatline', "
     "immediately call get_budget_details to provide an overview. "
+    "Budget summaries will include hints. Always call the matching tool to get full details if needed."
     "For questions about specific expenses or transactions, use get_transactions, filtering by date if relevant. "
     "You have full access to the user's budget ID — there is no need to ask them for it. "
     "To create an expected upcoming transaction (e.g., a monthly bill, recurring charge), use create_scheduled_transaction. Supply account ID, date, and amount. Optionally include payee name or category. "
@@ -73,7 +74,7 @@ def get_accounts(input: GetAccountsInput):
     logger.info(f"[TOOL] get_accounts called with budget_id={BUDGET_ID}")
     return {
         "status": "Retrieving your full budget overview...",
-        "data": client.get_accounts(BUDGET_ID) 
+        "data": client.slim_accounts_text(client.get_accounts(BUDGET_ID) )
     }
 
 class GetBudgetDetailsInput(BaseModel):
@@ -88,9 +89,31 @@ class GetBudgetDetailsInput(BaseModel):
 @budget_agent.tool_plain
 def get_budget_details(input: GetBudgetDetailsInput):
     logger.info(f"[TOOL] get_budget_details called with budget_id={BUDGET_ID}")
+    
+    budget = client.get_budget_details(BUDGET_ID)
+    name = budget.get('name', 'Unknown')
+    first_month = budget.get('first_month', 'Unknown')
+    last_month = budget.get('last_month', 'Unknown')
+    currency = budget.get('currency_format', {}).get('iso_code', 'EUR')
+
+    id = budget.get('id', 'Unkown')
+    
+    summary = (
+        f"Budget Name: {name}\n"
+        f"From: {first_month} to {last_month}\n"
+        f"Currency: {currency}\n\n"
+        "This budget contains the following account IDs :\n"
+        ''.join([f"Account Name:{x['name']} - Account ID: {x['id']}, " for x in budget['accounts']])+"\n\n"
+        "Detailed sections:\n"
+        "- To view account balances, call `get_accounts`.\n"
+        "- To view recent transactions, call `get_transactions`.\n"
+        "- To view your categories and budgets, call `get_categories`.\n"
+        "- To check upcoming scheduled payments, call `get_all_scheduled_transactions`.\n"
+    )
+    
     return {
-        "status": "Retrieving your full budget overview...",
-        "data": client.get_budget_details(BUDGET_ID)
+        "status": "Here's a high-level overview of your budget.",
+        "data": summary
     }
 
 
@@ -104,7 +127,7 @@ def get_transactions(input: GetTransactionsInput):
         logger.info(f"[TOOL] get_transactions called with budget_id={BUDGET_ID}, since_date={input.since_date}")
         return {
             "status": "Fetching transaction history...",
-            "data": client.get_transactions(BUDGET_ID, input.since_date)
+            "data": client.slim_transactions_text(client.get_transactions(BUDGET_ID, input.since_date))
         }
     except (ApiException, ProtocolError, socket.timeout, ConnectionError) as e:
         logger.warning(f"[TOOL ERROR] Network failure: {e}")
@@ -133,7 +156,7 @@ def get_all_scheduled_transactions(input: GetAllScheduledTransactionsInput):
     logger.info(f"[TOOL] get_all_scheduled_transactions called with budget_id={BUDGET_ID}")
     return {
         "status": "Checking scheduled transactions...",
-        "data": client.get_scheduled_transactions(BUDGET_ID)
+        "data": client.slim_scheduled_transactions_text(client.get_scheduled_transactions(BUDGET_ID))
     }
 
 class CreateScheduledTransactionInput(BaseModel):
@@ -199,51 +222,77 @@ class GetOverspentCategoriesInput(BaseModel):
 def get_overspent_categories(input: GetOverspentCategoriesInput):
     """List all categories that have been overspent this month."""
     logger.info(f"[TOOL] get_overspent_categories called with budget_id={BUDGET_ID}")
+    
     categories = client.get_categories(BUDGET_ID)
     overspent = []
 
     for cat_group in categories:
         for cat in cat_group.get("categories", []):
             if cat.get("activity", 0) < 0 and cat.get("balance", 0) < 0:
-                overspent.append({
-                    "name": cat["name"],
-                    "balance_display": cat.get("balance_display"),
-                    "activity_display": cat.get("activity_display"),
-                })
+                overspent.append(
+                    f"{cat['name']}: {cat.get('balance_display', 'unknown')} spent {cat.get('activity_display', 'unknown')} (id: {cat.get('id', 'missing_id')})"
+                )
+
+    overspent_text = "\n".join(overspent) if overspent else "No categories are overspent! 🎉"
+
     return {
         "status": f"Found {len(overspent)} overspent categories.",
-        "data": overspent
+        "data": overspent_text
     }
 
-
 class UpdateScheduledTransactionInput(BaseModel):
+    account_id: str
     scheduled_transaction_id: str
-    amount_eur: float
+    amount_eur: Optional[float] = None
     memo: Optional[str] = None
+    var_date: Optional[date] = None
 
 @budget_agent.tool_plain
 def update_scheduled_transaction(input: UpdateScheduledTransactionInput):
-    """Update amount or memo for an existing scheduled transaction."""
+    """Update amount, memo, or date for an existing scheduled transaction. Account ID (uid, not account name) is required """
     logger.info(f"[TOOL] update_scheduled_transaction called for ID {input.scheduled_transaction_id}")
 
-    amount_milliunits = int(input.amount_eur * 1000)
-
-    update_data = {
-        "scheduled_transaction": {
-            "amount": amount_milliunits,
-            "memo": input.memo
-        }
-    }
-
     try:
-        updated = client.scheduled_transactions_api.update_scheduled_transaction(BUDGET_ID, input.scheduled_transaction_id, update_data)
+        from ynab.models.put_scheduled_transaction_wrapper import PutScheduledTransactionWrapper
+        from ynab.models.save_scheduled_transaction import SaveScheduledTransaction
+
+        kwargs = {}
+        if input.account_id is None:
+            return {"error": "the account ID, a UID, not account name, is required"}
+        kwargs['account_id'] = input.account_id
+        if input.amount_eur is not None:
+            kwargs['amount'] = int(input.amount_eur * 1000)
+
+        if input.memo is not None:
+            kwargs['memo'] = input.memo
+
+        if input.var_date is not None:
+            if input.var_date > date.today() + timedelta(days=5*365):
+                return {
+                    "error": "Scheduled transaction date must be within 5 years from today."
+                }
+            kwargs['var_date'] = input.var_date.isoformat()
+
+        if not kwargs:
+            return {"error": "No fields provided to update. Specify amount, memo, or date."}
+
+        update_detail = SaveScheduledTransaction(**kwargs)
+        wrapper = PutScheduledTransactionWrapper(scheduled_transaction=update_detail)
+
+        updated = client.scheduled_transactions_api.update_scheduled_transaction(
+            BUDGET_ID,
+            input.scheduled_transaction_id,
+            wrapper
+        )
+
         return {
-            "status": "Scheduled transaction updated.",
+            "status": "Scheduled transaction updated successfully.",
             "data": updated.to_dict()
         }
     except Exception as e:
         logger.error(f"Failed to update scheduled transaction: {e}")
         return {"error": "Unable to update the scheduled transaction."}
+
 
 
 class DeleteScheduledTransactionInput(BaseModel):
@@ -326,7 +375,7 @@ def get_categories(input: GetCategoriesInput):
     logger.info(f"[TOOL] get_categories called with budget_id={BUDGET_ID}")
     return {
         "status": "Fetching list of categories...",
-        "data": client.get_categories(BUDGET_ID)
+        "data": client.slim_categories_text(client.get_categories(BUDGET_ID))
     }
 
 class GetCategoryByIdInput(BaseModel):

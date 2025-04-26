@@ -15,10 +15,14 @@ load_dotenv()
 
 class YNABSdkClient:
     # 🔹 Class-level constants (shared across all instances)
-    CACHE_TTL_HOURS = 12
+    CACHE_TTL_HOURS = 6
 
     def __init__(self):
         # 🔸 Instance-level configuration (specific to this client)
+        # NOTE:
+        # Only pure read methods are wrapped with self.cacheable().
+        # All write/mutation operations (create/update/delete) are left as direct API calls.
+
         access_token = os.getenv("YNAB_TOKEN")
         self.config = Configuration(access_token=access_token)
         self.api_client = ApiClient(self.config)
@@ -33,11 +37,8 @@ class YNABSdkClient:
         # 🔸 Read APIs (not caching scheduled_transactions at this time) 
         self.get_accounts = self.cacheable(self.get_accounts)
         self.get_budget_details = self.cacheable(self._get_budget_details_uncached)
+        self.get_scheduled_transactions = self.cacheable(self.get_scheduled_transactions)
         self.get_transactions = self.cacheable(self.get_transactions)
-
-        # 🔸 Write APIs 
-        # 
-
 
     def _get_budget_details_uncached(self, budget_id):
         raw_budget = self.budgets_api.get_budget_by_id(budget_id).data.budget
@@ -46,11 +47,20 @@ class YNABSdkClient:
     def get_accounts(self, budget_id):
         return self._normalize_currency_fields([a.to_dict() for a in self.accounts_api.get_accounts(budget_id).data.accounts])
     
+    # --- 🔹 Transaction Management ---
+
+    def get_transactions(self, budget_id, since_date=None):
+        transactions = self.transactions_api.get_transactions(budget_id, since_date).data.transactions
+        txns_dict = [t.to_dict() for t in transactions]
+        normalized = self._normalize_currency_fields(txns_dict)
+        return normalized
+   
     def get_scheduled_transactions(self, budget_id):
         return self._normalize_currency_fields([a.to_dict() for a in self.scheduled_transactions_api.get_scheduled_transactions(budget_id).data.scheduled_transactions])
 
     def create_scheduled_transaction(self, budget_id, data):
         response = self.scheduled_transactions_api.create_scheduled_transaction(budget_id, data)
+        self.invalidate_cache_for('get_scheduled_transactions', budget_id)
         return self._normalize_currency_fields(response)
 
     def get_scheduled_transaction_by_id(self, budget_id, scheduled_transaction_id):
@@ -59,10 +69,19 @@ class YNABSdkClient:
         )
 
     def update_scheduled_transaction(self, budget_id, scheduled_transaction_id, data):
-        return self.scheduled_transactions_api.update_scheduled_transaction(budget_id, scheduled_transaction_id, data)
+        updated = self.scheduled_transactions_api.update_scheduled_transaction(budget_id, scheduled_transaction_id, data)
+        self.invalidate_cache_for('get_scheduled_transactions', budget_id)
+        return updated
 
     def delete_scheduled_transaction(self, budget_id, scheduled_transaction_id):
-        return self.scheduled_transactions_api.delete_scheduled_transaction(budget_id, scheduled_transaction_id)
+        deleted = self.scheduled_transactions_api.delete_scheduled_transaction(budget_id, scheduled_transaction_id)
+        self.invalidate_cache_for('get_scheduled_transactions', budget_id)
+        return deleted
+ 
+    def create_transaction(self, budget_id, transaction_data):
+        created = self.transactions_api.create_transaction(budget_id, transaction_data)
+        self.invalidate_cache_for('get_transactions', budget_id)
+        return created
 
     # --- 🔹 Category Management (NEW) ---
 
@@ -81,6 +100,45 @@ class YNABSdkClient:
 
     def update_month_category(self, budget_id, month, category_id, data):
         return self.categories_api.update_month_category(budget_id, month, category_id, data)
+
+
+    # --- token compression --- # 
+
+    # === Slim Text Summarizers for YNAB ===
+
+    def slim_accounts_text(self, accounts):
+        """Slim down accounts with ID and balance info."""
+        return "\n".join(
+            f"{acct['name']}: {acct.get('balance_display', 'unknown')} (id: {acct.get('id', 'missing_id')})"
+            for acct in accounts
+        )
+
+    def slim_scheduled_transactions_text(self, scheduled_txns):
+        """Slim down scheduled transactions with payee, amount, date, and id."""
+        return "\n".join(
+            f"Linked Account ID : {txn.get('account_id', 'Unknown Account')}, Next date for transaction : {txn.get('date_next', 'Unknown Date')}, Payee: {txn.get('payee_name', 'Unnamed Payee')}, Amount: {txn.get('amount_display', 'Unknown Amount')} Specific Transaction ID : (transaction_id: {txn.get('id', 'missing_id')})"
+            for txn in scheduled_txns
+        )
+
+    def slim_categories_text(self, categories):
+        """Slim down categories with name, balance, and id."""
+        lines = []
+        for group in categories:
+            group_name = group.get('name', 'Unnamed Group')
+            lines.append(f"\n{group_name}:")
+            for cat in group.get('categories', []):
+                name = cat.get('name', 'Unnamed Category')
+                balance = cat.get('balance_display', 'unknown')
+                category_id = cat.get('id', 'missing_id')
+                lines.append(f"  {name}: {balance} (id: {category_id})")
+        return "\n".join(lines)
+
+    def slim_transactions_text(self, transactions):
+        """Slim down real transactions with basic details and id."""
+        return "\n".join(
+            f"{txn.get('date', 'Unknown Date')}: {txn.get('payee_name', 'Unnamed Payee')} - {txn.get('amount_display', 'Unknown Amount')} (id: {txn.get('id', 'missing_id')})"
+            for txn in transactions
+        )
 
     def _cache_key(self, func_name, args, kwargs):
         raw = json.dumps({
@@ -104,16 +162,29 @@ class YNABSdkClient:
             return None
         return data["value"]
 
-    def _save_cache(self, key, value):
+    def _save_cache(self, key, value, source=None):
         path = self._get_cache_path(key)
         path.parent.mkdir(parents=True, exist_ok=True)
         tmp_path = path.with_suffix(".tmp")
         with open(tmp_path, "w") as f:
             json.dump({
                 "fetched_at": datetime.now().isoformat(),
+                "source": source or "unknown",
+                "schema_version": 1,
                 "value": value
             }, f, indent=2)
         os.replace(tmp_path, path)  # atomic replacement
+
+
+    def invalidate_cache_for(self, func_name, *args, **kwargs):
+        """Invalidate (delete) cache for a specific function call."""
+        key = self._cache_key(func_name, args, kwargs)
+        path = self._get_cache_path(key)
+        if path.exists():
+            path.unlink()
+            logger.info(f"[CACHE INVALIDATED] {func_name} with args={args}")
+        else:
+            logger.info(f"[CACHE INVALIDATION SKIPPED] No cache found for {func_name} with args={args}")
 
     def cacheable(self, func):
         def wrapper(*args, **kwargs):
@@ -124,7 +195,7 @@ class YNABSdkClient:
                 return cached
             logger.info(f"[CACHE MISS] {func.__name__}")
             result = func(*args, **kwargs)
-            self._save_cache(key, result)
+            self._save_cache(key, result, source=func.__name__)
             return result
         return wrapper
 
@@ -157,24 +228,5 @@ class YNABSdkClient:
             return [self._normalize_currency_fields(i) for i in obj]
 
         return obj
-
-    # 🔸 Private utility for fetching fresh data and updating cache
-    def _fetch_and_cache_transactions(self, budget_id, since_date=None):
-        transactions = self.transactions_api.get_transactions(budget_id, since_date).data.transactions
-        txns_dict = [t.to_dict() for t in transactions]
-        normalized = self._normalize_currency_fields(txns_dict)
-        key = self._cache_key("get_transactions", (budget_id, since_date), {})
-        self._save_cache(key, normalized)
-        return normalized
-
-    # 🔸 Public method that uses caching
-    def get_transactions(self, budget_id, since_date=None):
-        key = self._cache_key("get_transactions", (budget_id, since_date), {})
-        cached = self._load_cache(key)
-        if cached is not None:
-            logger.info(f"[CACHE HIT] get_transactions")
-            return cached
-        logger.info(f"[CACHE MISS] get_transactions")
-        return self._fetch_and_cache_transactions(budget_id, since_date)
 
 

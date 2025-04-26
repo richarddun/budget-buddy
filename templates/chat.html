@@ -216,17 +216,18 @@ button[type="submit"]:hover {
       });
 
       source.onmessage = (e) => {
-        fullMessage += e.data;
-        streamSpan.innerHTML = fullMessage;
-        chatbox.scrollTop = chatbox.scrollHeight;
+          fullMessage += e.data;
+          streamSpan.innerHTML = fullMessage.replace(/\n/g, '<br>');  // TEMP display
+          chatbox.scrollTop = chatbox.scrollHeight;
       };
 
       source.addEventListener("done", () => {
-        console.log('✅ received done event');
-        if (spinner) {
-          spinner.classList.add("fade-out");
-          setTimeout(() => spinner.remove(), 300);
-        }
+          console.log('✅ Stream finished, parsing full message');
+          streamSpan.innerHTML = marked.parse(fullMessage);  // FINAL display
+          if (spinner) {
+            spinner.classList.add("fade-out");
+            setTimeout(() => spinner.remove(), 300);
+          }
       });
 
       source.onerror = (err) => {

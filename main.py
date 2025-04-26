@@ -74,8 +74,7 @@ def load_recent_messages(limit=10):
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute("SELECT prompt, response FROM messages ORDER BY id DESC LIMIT ?", (limit,))
-    messages = [{"prompt": row[0], "response": html.unescape(row[1]).replace("\\n", "<br>").replace("<br>", "<br>")} for row in reversed(c.fetchall())]
-    #messages = [{"prompt": row[0], "response": html.unescape(row[1])} for row in reversed(c.fetchall())]
+    messages = [{"prompt": row[0], "response": html.unescape(row[1])} for row in reversed(c.fetchall())]
     conn.close()
     return messages
 
@@ -110,11 +109,15 @@ async def htmx_chat(request: Request, prompt: str = Form(...)):
 async def sse(prompt: str, fresh: bool = False):
     logger.info(f"[SSE] Incoming stream request with prompt: {prompt}")
 
+    incoming_prompt = prompt.strip()  # capture clean user input
+
     if not fresh:
         history = format_chat_history(limit=10)
-        if not prompt.strip().lower().startswith("you:"):
-            prompt = f"You: {prompt}"
-        prompt = f"{history}\n{prompt}"
+        if not incoming_prompt.lower().startswith("you:"):
+            formatted_prompt = f"You: {incoming_prompt}"
+        else:
+            formatted_prompt = incoming_prompt
+        prompt = f"{history}\n{formatted_prompt}"
 
     logger.info(f"[SSE] Final prompt sent to agent: {repr(prompt[:120])}...")
 
@@ -140,12 +143,13 @@ async def sse(prompt: str, fresh: bool = False):
             async for token in result.stream_text(delta=True):
                 logger.info(f"[SSE] Token received: {repr(token)}")
                 safe_token = token.replace('\n', '<br>')
+                #safe_token = token
                 yield f"event: message{lnbrk}data: {safe_token}{lnbrk}{lnbrk}"
                 full_response += safe_token
                 await asyncio.sleep(0.01)
 
         logger.info("[SSE] Full response assembled, storing...")
-        store_message(prompt, full_response)
+        store_message(incoming_prompt, full_response)
         yield f"event: done\ndata: done\n\n"
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
