@@ -129,7 +129,28 @@ button[type="submit"]:hover {
   }
 }
 
-  </style>
+.spinner {
+  display: inline-block;
+  width: 1em;
+  height: 1em;
+  border: 2px solid #ccc;
+  border-top-color: #3367d6;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  vertical-align: middle;
+  margin-left: 0.5em;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.spinner.fade-out {
+  opacity: 0;
+  transition: opacity 0.5s ease-out;
+}
+
+</style>
 </head>
 <body>
 
@@ -143,6 +164,9 @@ button[type="submit"]:hover {
     <button onclick="startNewSession()">🧼 New Session</button>
     <h2>Export chat</h2>
     <button onclick="window.print()">🖨️ Export as PDF</button>
+    <h2>Voice Output</h2>
+    <button id="toggle-voice-button" onclick="toggleVoiceOutput()">🔈 Voice Output: OFF</button>
+
   </div>
 
   <div id="main">
@@ -165,35 +189,53 @@ button[type="submit"]:hover {
       promptInput.focus();
     }
 
-    document.body.addEventListener('htmx:afterSwap', function (evt) {
-      if (evt.detail.target.id === "chatbox") {
-        const promptInput = document.getElementById('prompt');
-        const prompt = promptInput.value;
-        promptInput.value = ""; // Clear input
-        const chatbox = document.getElementById('chatbox');
+  document.body.addEventListener('htmx:afterSwap', function (evt) {
+    if (evt.detail.target.id === "chatbox") {
+      const promptInput = document.getElementById('prompt');
+      const prompt = promptInput.value;
+      promptInput.value = ""; // Clear input
+      const chatbox = document.getElementById('chatbox');
 
-        const spans = document.querySelectorAll("#chatbox span");
-        const span = spans[spans.length - 1];
-        if (!span) return;
+      const streamSpanAll = document.querySelectorAll("span#stream-content");
+      const streamSpan = streamSpanAll[streamSpanAll.length -1]
+      const spinner = document.getElementById("status-spinner");
 
-        let fullMessage = "";
-        const source = new EventSource(`/sse?prompt=${encodeURIComponent(prompt)}`);
-        console.log("[SSE] Stream opened");
+      if (!streamSpan) return;
 
-        source.onmessage = (e) => {
-          console.log("[SSE] Message:", e.data);
-          fullMessage += e.data;
-          span.innerHTML = fullMessage;
-          chatbox.scrollTop = chatbox.scrollHeight;
-        };
+      let fullMessage = "";
 
-        source.onerror = (err) => {
-          console.error("[SSE] Stream error:", err);
-          span.innerHTML = marked.parse(fullMessage);
-          source.close();
-        };
-      }
-    });
+      const source = new EventSource(`/sse?prompt=${encodeURIComponent(prompt)}`);
+      console.log("[SSE] Stream opened");
+
+      source.addEventListener("status", (e) => {
+        if (streamSpan) {
+          console.log('received event!')
+          streamSpan.innerHTML = `<em>${e.data}</em>`;
+        }
+      });
+
+      source.onmessage = (e) => {
+        fullMessage += e.data;
+        streamSpan.innerHTML = fullMessage;
+        chatbox.scrollTop = chatbox.scrollHeight;
+      };
+
+      source.addEventListener("done", () => {
+        console.log('✅ received done event');
+        if (spinner) {
+          spinner.classList.add("fade-out");
+          setTimeout(() => spinner.remove(), 300);
+        }
+      });
+
+      source.onerror = (err) => {
+        console.error("[SSE] Stream error:", err);
+        streamSpan.innerHTML = marked.parse(fullMessage); // fallback parse
+        source.close();
+      };
+    }
+  });
+
 
     document.getElementById('prompt').addEventListener('input', function () {
       this.style.height = 'auto';
@@ -234,6 +276,106 @@ button[type="submit"]:hover {
         window.print();
       }, 500);  // small delay for scroll
     }
+// === 🎤 Voice Input Setup ===
+let recognition;
+if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    recognition = new SpeechRecognition();
+    recognition.lang = 'en-IE'; // Customize if you want (en-IE etc)
+    recognition.continuous = false;
+    recognition.interimResults = false;
+
+    function startVoiceInput() {
+        recognition.start();
+    }
+
+    recognition.onresult = function(event) {
+        const transcript = event.results[0][0].transcript;
+        const promptInput = document.getElementById('prompt');
+        promptInput.value = transcript;
+        promptInput.focus();
+    };
+
+    recognition.onerror = function(event) {
+        alert('recognition error')
+        console.error('Speech recognition error:', event.error);
+    };
+}
+
+// === 🗣️ Voice Output Setup ===
+let voiceOutputEnabled = false; // Global toggle
+
+function toggleVoiceOutput() {
+    voiceOutputEnabled = !voiceOutputEnabled;
+    const toggleButton = document.getElementById('toggle-voice-button');
+    toggleButton.textContent = voiceOutputEnabled ? '🔊 Voice Output: ON' : '🔈 Voice Output: OFF';
+}
+
+function speakSmartly(text) {
+    if (!voiceOutputEnabled) {
+        console.log("[Voice] Output disabled — skipping speech.");
+        return;
+    }
+
+    if (!('speechSynthesis' in window)) {
+        console.warn("SpeechSynthesis not supported");
+        return;
+    }
+
+    let shortText = text;
+
+    if (text.length > 300 || text.includes('•') || text.includes('- ') || text.includes("\n- ")) {
+        shortText = "I've found multiple details for you. Please take a look at the text output on your screen.";
+    }
+
+    const utterance = new SpeechSynthesisUtterance(shortText);
+    utterance.lang = 'en-US'; // Customize if needed
+    speechSynthesis.speak(utterance);
+}
+
+// === 🎛️ Hook into Chat Updates ===
+document.body.addEventListener('htmx:afterSwap', function (evt) {
+    if (evt.detail.target.id === "chatbox") {
+        const chatbox = document.getElementById('chatbox');
+        const entries = chatbox.querySelectorAll('strong');
+        if (entries.length > 0) {
+            const lastAgentResponse = entries[entries.length - 1].nextElementSibling?.innerText;
+            if (lastAgentResponse) {
+                speakSmartly(lastAgentResponse);
+            }
+        }
+    }
+});
+
+// === 🎤 Add Mic Button Dynamically ===
+function addMicButton() {
+    const form = document.getElementById('chat-form');
+    if (!form || document.getElementById('mic-button')) return;
+
+    const micButton = document.createElement('button');
+    micButton.type = 'button';
+    micButton.id = 'mic-button';
+    micButton.textContent = '🎤';
+    micButton.style.marginLeft = '0.5em';
+    micButton.style.padding = '0.6em 0.8em';
+    micButton.style.backgroundColor = '#555';
+    micButton.style.border = 'none';
+    micButton.style.borderRadius = '4px';
+    micButton.style.color = 'white';
+    micButton.style.cursor = 'pointer';
+
+    micButton.onclick = () => {
+        if (recognition) {
+            startVoiceInput();
+        } else {
+            alert('Sorry, your browser does not support speech recognition.');
+        }
+    };
+
+    form.appendChild(micButton);
+}
+
+document.addEventListener('DOMContentLoaded', addMicButton);
 
 
   </script>
