@@ -74,7 +74,8 @@ def load_recent_messages(limit=10):
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute("SELECT prompt, response FROM messages ORDER BY id DESC LIMIT ?", (limit,))
-    messages = [{"prompt": row[0], "response": html.unescape(row[1])} for row in reversed(c.fetchall())]
+    messages = [{"prompt": row[0], "response": html.unescape(row[1]).replace("\\n", "<br>").replace("<br>", "<br>")} for row in reversed(c.fetchall())]
+    #messages = [{"prompt": row[0], "response": html.unescape(row[1])} for row in reversed(c.fetchall())]
     conn.close()
     return messages
 

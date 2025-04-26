@@ -4,7 +4,8 @@ import json
 from pathlib import Path
 import os
 from dotenv import load_dotenv
-from ynab import Configuration, ApiClient, BudgetsApi, TransactionsApi, AccountsApi, ScheduledTransactionsApi
+from ynab import Configuration, ApiClient, BudgetsApi, TransactionsApi, AccountsApi, ScheduledTransactionsApi, CategoriesApi
+
 from datetime import datetime, timedelta, date
 import json
 import logging
@@ -27,6 +28,7 @@ class YNABSdkClient:
         self.transactions_api = TransactionsApi(self.api_client)
         self.accounts_api = AccountsApi(self.api_client)
         self.scheduled_transactions_api = ScheduledTransactionsApi(self.api_client)
+        self.categories_api = CategoriesApi(self.api_client)
 
         # 🔸 Read APIs (not caching scheduled_transactions at this time) 
         self.get_accounts = self.cacheable(self.get_accounts)
@@ -51,7 +53,34 @@ class YNABSdkClient:
         response = self.scheduled_transactions_api.create_scheduled_transaction(budget_id, data)
         return self._normalize_currency_fields(response)
 
+    def get_scheduled_transaction_by_id(self, budget_id, scheduled_transaction_id):
+        return self._normalize_currency_fields(
+            self.scheduled_transactions_api.get_scheduled_transaction_by_id(budget_id, scheduled_transaction_id).data.scheduled_transaction.to_dict()
+        )
 
+    def update_scheduled_transaction(self, budget_id, scheduled_transaction_id, data):
+        return self.scheduled_transactions_api.update_scheduled_transaction(budget_id, scheduled_transaction_id, data)
+
+    def delete_scheduled_transaction(self, budget_id, scheduled_transaction_id):
+        return self.scheduled_transactions_api.delete_scheduled_transaction(budget_id, scheduled_transaction_id)
+
+    # --- 🔹 Category Management (NEW) ---
+
+    def get_categories(self, budget_id):
+        return self._normalize_currency_fields(
+            [g.to_dict() for g in self.categories_api.get_categories(budget_id).data.category_groups]
+        )
+
+    def get_category_by_id(self, budget_id, category_id):
+        return self._normalize_currency_fields(
+            self.categories_api.get_category_by_id(budget_id, category_id).data.category.to_dict()
+        )
+
+    def update_category(self, budget_id, category_id, data):
+        return self.categories_api.update_category(budget_id, category_id, data)
+
+    def update_month_category(self, budget_id, month, category_id, data):
+        return self.categories_api.update_month_category(budget_id, month, category_id, data)
 
     def _cache_key(self, func_name, args, kwargs):
         raw = json.dumps({

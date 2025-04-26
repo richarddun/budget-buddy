@@ -52,6 +52,10 @@ system_prompt = (
     "If the user says they want to add a real transaction ('log my coffee', 'record a grocery purchase', 'add a transaction'), call create_transaction, assuming today's date unless they specify otherwise. "
     "If the user asks to remove or delete a real transaction ('delete a wrong transaction', 'remove an expense'), call delete_transaction. "
     "Default account is CURRENT-166 unless the user specifies otherwise for transaction-related tools. "
+    'If the user mentions saving for something, setting a savings target, or mentions a goal amount (e.g., "save €500 for vacation", "set a target for Christmas shopping"), call update_category to set a goal target.'
+    'If the user mentions increasing or adjusting a monthly budget for a category (e.g., "increase my groceries budget to €500 for May", "adjust the eating out budget for next month"), call update_month_category.'
+    'When interpreting amounts, assume the currency is in euros unless otherwise specified.'
+    'When the month is not explicitly specified, assume the current month unless the user says otherwise.'
     "When suggesting actions, be proactive but respectful — e.g., 'Would you like me to help you log that transaction?' or 'Would you like me to update that for you?'"
 )
 )
@@ -312,6 +316,89 @@ def delete_transaction(input: DeleteTransactionInput):
     except Exception as e:
         logger.error(f"Failed to delete transaction: {e}")
         return {"error": "Unable to delete the transaction."}
+
+class GetCategoriesInput(BaseModel):
+    budget_id: str
+
+@budget_agent.tool_plain
+def get_categories(input: GetCategoriesInput):
+    """Retrieve all categories grouped by their group name."""
+    logger.info(f"[TOOL] get_categories called with budget_id={BUDGET_ID}")
+    return {
+        "status": "Fetching list of categories...",
+        "data": client.get_categories(BUDGET_ID)
+    }
+
+class GetCategoryByIdInput(BaseModel):
+    budget_id: str
+    category_id: str
+
+@budget_agent.tool_plain
+def get_category_by_id(input: GetCategoryByIdInput):
+    """Fetch details for a single category."""
+    logger.info(f"[TOOL] get_category_by_id called with category_id={input.category_id}")
+    return {
+        "status": f"Retrieving category {input.category_id}...",
+        "data": client.get_category_by_id(BUDGET_ID, input.category_id)
+    }
+
+
+class UpdateCategoryInput(BaseModel):
+    category_id: str
+    goal_type: Optional[str] = None  # e.g., "TB", "TBD", "MF", "NEED"
+    goal_target: Optional[float] = None  # Amount in euros
+
+@budget_agent.tool_plain
+def update_category(input: UpdateCategoryInput):
+    """Update the target or type of a category (e.g., setting a savings goal)."""
+    logger.info(f"[TOOL] update_category called for {input.category_id}")
+
+    data = {
+        "category": {}
+    }
+
+    if input.goal_type:
+        data["category"]["goal_type"] = input.goal_type
+    if input.goal_target is not None:
+        # Convert euros to milliunits
+        data["category"]["goal_target"] = int(input.goal_target * 1000)
+
+    try:
+        response = client.update_category(BUDGET_ID, input.category_id, data)
+        return {
+            "status": "Category updated successfully!",
+            "data": response.to_dict()
+        }
+    except Exception as e:
+        logger.error(f"Failed to update category: {e}")
+        return {"error": "Unable to update the category."}
+
+
+class UpdateMonthCategoryInput(BaseModel):
+    category_id: str
+    month: date
+    budgeted_amount_eur: float
+
+@budget_agent.tool_plain
+def update_month_category(input: UpdateMonthCategoryInput):
+    """Adjust the budgeted amount for a specific month and category."""
+    logger.info(f"[TOOL] update_month_category called for {input.category_id} in month {input.month}")
+
+    data = {
+        "month_category": {
+            "budgeted": int(input.budgeted_amount_eur * 1000)  # Convert to milliunits
+        }
+    }
+
+    try:
+        response = client.update_month_category(BUDGET_ID, input.month.isoformat(), input.category_id, data)
+        return {
+            "status": "Monthly category budget updated successfully!",
+            "data": response.to_dict()
+        }
+    except Exception as e:
+        logger.error(f"Failed to update month category: {e}")
+        return {"error": "Unable to update the monthly budgeted amount."}
 
 #class GetFirstBudgetIdInput(BaseModel):
 #    pass
