@@ -16,6 +16,8 @@ import os
 import json
 from datetime import datetime
 from dotenv import load_dotenv
+from pydantic_ai.messages import ToolCallPart, ToolReturnPart
+
 load_dotenv()
 
 # --- Template Setup ---
@@ -109,7 +111,7 @@ async def htmx_chat(request: Request, prompt: str = Form(...)):
 async def sse(prompt: str, fresh: bool = False):
     logger.info(f"[SSE] Incoming stream request with prompt: {prompt}")
 
-    incoming_prompt = prompt.strip()  # capture clean user input
+    incoming_prompt = prompt.strip()
 
     if not fresh:
         history = format_chat_history(limit=10)
@@ -119,40 +121,57 @@ async def sse(prompt: str, fresh: bool = False):
             formatted_prompt = incoming_prompt
         prompt = f"{history}\n{formatted_prompt}"
 
-    logger.info(f"[SSE] Final prompt sent to agent: {repr(prompt[:120])}...")
-
     async def event_stream():
         logger.info("[SSE] Stream started")
         full_response = ""
         lnbrk = "\n"
-        yield "retry: 1000\n\n"
-        yield "event: open\n\n"
+        yield f"retry: 1000{lnbrk}{lnbrk}"
+        yield f"event: open{lnbrk}{lnbrk}"
 
         async with budget_agent.run_stream(prompt) as result:
-            # Emit status messages from tool responses if present
-            if hasattr(result, "tool_calls") and result.tool_calls:
-                for call in result.tool_calls:
-                    tool_output = call.output
-                    if isinstance(tool_output, dict) and "status" in tool_output:
-                        status_msg = tool_output["status"]
-                        logger.info(f"[SSE] Status from tool: {status_msg}")
-                        yield f"event: status{lnbrk}data: {status_msg}{lnbrk}{lnbrk}"
-                        await asyncio.sleep(0.1)  # slight pause to let UI update
+            logger.info("[SSE] Agent streaming started.")
 
-            # Begin token streaming
+            # Step 1: Handle any new messages (e.g., tool calls)
+            for message in result.new_messages():
+                for part in message.parts:
+                    # Detect live tool call
+                    if isinstance(part, ToolCallPart):
+                        tool_name = part.tool_name
+                        try:
+                            args_json = (
+                                part.args.args_json
+                                if hasattr(part.args, 'args_json')
+                                else json.dumps(part.args.args_dict)
+                            )
+                        except Exception:
+                            args_json = "{}"
+
+                        status_msg = f"🔧 Calling tool: {tool_name}"
+                        logger.info(f"[SSE] Live tool call detected: {tool_name}")
+                        yield f"event: status{lnbrk}data: {status_msg}{lnbrk}{lnbrk}"
+                        await asyncio.sleep(0.1)
+
+                    # (Optional) detect tool return part
+                    elif isinstance(part, ToolReturnPart):
+                        tool_id = part.tool_call_id
+                        status_msg = f"✅ Tool {tool_id} returned."
+                        logger.info(f"[SSE] Tool return detected: {tool_id}")
+                        yield f"event: status{lnbrk}data: {status_msg}{lnbrk}{lnbrk}"
+                        await asyncio.sleep(0.1)
+
+            # Step 2: Stream the normal text tokens
             async for token in result.stream_text(delta=True):
-                logger.info(f"[SSE] Token received: {repr(token)}")
-                safe_token = token.replace('\n', '<br>')
-                #safe_token = token
+                safe_token = token.replace('\n', '<br>')  # Optional HTML line break handling
                 yield f"event: message{lnbrk}data: {safe_token}{lnbrk}{lnbrk}"
                 full_response += safe_token
                 await asyncio.sleep(0.01)
 
-        logger.info("[SSE] Full response assembled, storing...")
+        logger.info("[SSE] Full response complete, storing...")
         store_message(incoming_prompt, full_response)
-        yield f"event: done\ndata: done\n\n"
+        yield f"event: done{lnbrk}data: done{lnbrk}{lnbrk}"
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
+
 
 @app.post("/reset-session")
 async def reset_session():
