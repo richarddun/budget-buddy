@@ -153,6 +153,11 @@ button[type="submit"]:hover {
   transition: opacity 0.5s ease-out;
 }
 
+.fade-out {
+  opacity: 0;
+  transition: opacity 2s ease-out;
+}
+
 </style>
 </head>
 <body>
@@ -167,6 +172,9 @@ button[type="submit"]:hover {
     <button onclick="startNewSession()">🧼 New Session</button>
     <h2>Export chat</h2>
     <button onclick="window.print()">🖨️ Export as PDF</button>
+    <h2>Receipts</h2>
+    <button onclick="window.location.href='/uploads'">📂 View Uploaded Receipts</button>
+
     <h2>Voice Output</h2>
     <h3>(Under Development)</h3>
     <button id="toggle-voice-button" onclick="toggleVoiceOutput()">🔈 Voice Output: OFF</button>
@@ -185,12 +193,12 @@ button[type="submit"]:hover {
       <button type="submit">Send</button>
     </form>
   </div>
-  <form id="upload-form" enctype="multipart/form-data" style="margin-top: 2em;">
-      <label style="display:block;margin-bottom:0.5em;">Upload Receipt(s)</label>
-      <input type="file" id="file-input" name="files" accept="image/*" multiple required>
-      <button type="submit">Upload Receipt(s)</button>
-      <div id="upload-status" style="margin-top: 0.5em; color: lightgreen;"></div>
-  </form>
+    <form id="upload-form" enctype="multipart/form-data" style="margin-top: 2em;">
+        <label style="display:block;margin-bottom:0.5em;">Upload Receipt(s)</label>
+        <input type="file" id="file-input" name="files" accept="image/*" multiple required>
+        <button type="submit">Upload Receipt(s)</button>
+        <div id="upload-status" style="margin-top: 0.5em; color: lightgreen;"></div>
+    </form>
 
   <script>
     function setPrompt(text) {
@@ -317,6 +325,14 @@ document.getElementById('upload-form').addEventListener('submit', async function
         if (result.status === "success") {
             statusDiv.textContent = `✅ Successfully uploaded ${result.filenames.length} file(s)!`;
             fileInput.value = ""; // Clear the file input
+            // 🧹 After 3 seconds, fade out over 1 second, then clear
+            setTimeout(() => {
+                statusDiv.classList.add('fade-out');
+                setTimeout(() => {
+                    statusDiv.textContent = "";
+                    statusDiv.classList.remove('fade-out');
+                }, 1000); // Match transition duration
+            }, 3000);  // Wait 3 seconds before fading
         } else {
             statusDiv.textContent = `❌ Error uploading: ${result.detail}`;
         }

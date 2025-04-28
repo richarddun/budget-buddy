@@ -19,9 +19,7 @@ from datetime import datetime
 from dotenv import load_dotenv
 load_dotenv()
 
-# --- File upload Setup ---
-UPLOAD_DIR = Path("uploaded_receipts")
-UPLOAD_DIR.mkdir(exist_ok=True)
+
 
 # --- Template Setup ---
 templates = Jinja2Templates(directory="templates")
@@ -29,6 +27,11 @@ app = FastAPI()
 app.mount("/static", StaticFiles(directory="static"), name="static")
 LOG_FILE = "chat_history_log.json"
 DB_PATH = Path("chat_history.db")
+
+# --- File upload Setup ---
+UPLOAD_DIR = Path("uploaded_receipts")
+UPLOAD_DIR.mkdir(exist_ok=True)
+app.mount("/receipts", StaticFiles(directory=UPLOAD_DIR), name="receipts")
 
 def init_db():
     conn = sqlite3.connect(DB_PATH)
@@ -186,6 +189,49 @@ async def upload_receipt(files: List[UploadFile] = File(...)):
             return {"status": "error", "detail": str(e)}
 
     return {"status": "success", "filenames": uploaded_filenames}
+
+from fastapi.responses import HTMLResponse
+
+@app.get("/uploads", response_class=HTMLResponse)
+async def view_uploads():
+    files = [f.name for f in UPLOAD_DIR.iterdir() if f.is_file()]
+    
+    # Generate HTML gallery
+    images_html = ""
+    for file in files:
+        images_html += f"""
+        <div style="display:inline-block; margin:10px; text-align:center;">
+            <a href="/receipts/{file}" target="_blank">
+                <img src="/receipts/{file}" style="width:150px; height:auto; border-radius:8px; box-shadow:0 0 5px #aaa;">
+            </a>
+            <div style="margin-top:5px; font-size:0.9em; color:#ccc;">{file}</div>
+        </div>
+        """
+
+    page_html = f"""
+    <html>
+    <head>
+    <title>Uploaded Receipts</title>
+    <style>
+        body {{
+            background-color: #1e1e2f;
+            color: #ddd;
+            font-family: 'Segoe UI', sans-serif;
+            text-align: center;
+        }}
+        h1 {{
+            margin-top: 20px;
+        }}
+    </style>
+    </head>
+    <body>
+    <div id="backlink"><a href="/" style="display:inline-block; margin:15px; padding:10px 20px; background:#4477dd; color:white; text-decoration:none; border-radius:8px;">⬅️ Back to Chat</a></div>
+    <h1>📂 Uploaded Receipts</h1>
+    {images_html if images_html else "<p>No receipts uploaded yet.</p>"}
+    </body>
+    </html>
+    """
+    return HTMLResponse(content=page_html)
 
 @app.get("/sse-test")
 async def sse_test():

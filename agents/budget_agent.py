@@ -13,7 +13,8 @@ from ynab_sdk_client import YNABSdkClient  # your wrapper
 from ynab.exceptions import ApiException, BadRequestException
 from urllib3.exceptions import ProtocolError
 import socket
-from ynab.models import PostScheduledTransactionWrapper, SaveScheduledTransaction
+from ynab.models import PostScheduledTransactionWrapper, SaveScheduledTransaction 
+from ynab.models.patch_month_category_wrapper import PatchMonthCategoryWrapper
 import logging
 logger = logging.getLogger("uvicorn.error")
 
@@ -421,6 +422,7 @@ def get_category_by_id(input: GetCategoryByIdInput):
 
 class UpdateCategoryInput(BaseModel):
     category_id: str
+    budgeted_amount_eur: float
     goal_type: Optional[str] = None  # e.g., "TB", "TBD", "MF", "NEED"
     goal_target: Optional[float] = None  # Amount in euros
 
@@ -430,7 +432,9 @@ def update_category(input: UpdateCategoryInput):
     logger.info(f"[TOOL] update_category called for {input.category_id}")
 
     data = {
-        "category": {}
+        "category": {
+               "budgeted": int(input.budgeted_amount_eur * 1000)  # Convert to milliunits
+        }
     }
 
     if input.goal_type:
@@ -461,7 +465,7 @@ def update_month_category(input: UpdateMonthCategoryInput):
     logger.info(f"[TOOL] update_month_category called for {input.category_id} in month {input.month}")
 
     data = {
-        "month_category": {
+        "category": {
             "budgeted": int(input.budgeted_amount_eur * 1000)  # Convert to milliunits
         }
     }
