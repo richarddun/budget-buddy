@@ -95,6 +95,9 @@ button[type="submit"] {
 button[type="submit"]:hover {
   background-color: #3455aa;
 }
+#upload-form {
+  width: 10%;
+}
 /* print view */
 @media print {
   #sidebar, form, button {
@@ -182,6 +185,12 @@ button[type="submit"]:hover {
       <button type="submit">Send</button>
     </form>
   </div>
+  <form id="upload-form" enctype="multipart/form-data" style="margin-top: 2em;">
+      <label style="display:block;margin-bottom:0.5em;">Upload Receipt(s)</label>
+      <input type="file" id="file-input" name="files" accept="image/*" multiple required>
+      <button type="submit">Upload Receipt(s)</button>
+      <div id="upload-status" style="margin-top: 0.5em; color: lightgreen;"></div>
+  </form>
 
   <script>
     function setPrompt(text) {
@@ -278,6 +287,44 @@ button[type="submit"]:hover {
         window.print();
       }, 500);  // small delay for scroll
     }
+
+    // === form file upload handling ===
+
+document.getElementById('upload-form').addEventListener('submit', async function (event) {
+    event.preventDefault(); // Prevent full page reload
+
+    const fileInput = document.getElementById('file-input');
+    const statusDiv = document.getElementById('upload-status');
+    const files = fileInput.files;
+
+    if (!files.length) {
+        statusDiv.textContent = "Please select at least one file.";
+        return;
+    }
+
+    const formData = new FormData();
+    for (const file of files) {
+        formData.append('files', file); // add multiple files
+    }
+
+    try {
+        const response = await fetch('/upload-receipt', {
+            method: 'POST',
+            body: formData
+        });
+        const result = await response.json();
+
+        if (result.status === "success") {
+            statusDiv.textContent = `✅ Successfully uploaded ${result.filenames.length} file(s)!`;
+            fileInput.value = ""; // Clear the file input
+        } else {
+            statusDiv.textContent = `❌ Error uploading: ${result.detail}`;
+        }
+    } catch (error) {
+        console.error("Upload error:", error);
+        statusDiv.textContent = "❌ Error uploading file(s).";
+    }
+});
 // === 🎤 Voice Input Setup ===
 let recognition;
 if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {

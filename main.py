@@ -1,7 +1,7 @@
 # main.py
 import logging
 logger = logging.getLogger("uvicorn.error")
-from fastapi import FastAPI, Request, Form
+from fastapi import FastAPI, Request, Form, UploadFile, File
 from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
@@ -10,6 +10,7 @@ import uvicorn
 import html
 import sqlite3
 from pathlib import Path
+from typing import List
 import asyncio
 from ynab_sdk_client import YNABSdkClient as ynab
 import os
@@ -17,6 +18,10 @@ import json
 from datetime import datetime
 from dotenv import load_dotenv
 load_dotenv()
+
+# --- File upload Setup ---
+UPLOAD_DIR = Path("uploaded_receipts")
+UPLOAD_DIR.mkdir(exist_ok=True)
 
 # --- Template Setup ---
 templates = Jinja2Templates(directory="templates")
@@ -127,7 +132,7 @@ async def sse(prompt: str, fresh: bool = False):
         lnbrk = "\n"
         yield "retry: 1000\n\n"
         yield "event: open\n\n"
-
+        logger.info("[SSE] Heading into agent-runstream..")
         async with budget_agent.run_stream(prompt) as result:
             # Emit status messages from tool responses if present
             if hasattr(result, "tool_calls") and result.tool_calls:
@@ -164,6 +169,23 @@ async def reset_session():
     logger.info("[SESSION] Chat history cleared.")
     return {"status": "ok", "message": "Session reset."}
 
+@app.post("/upload-receipt")
+async def upload_receipt(files: List[UploadFile] = File(...)):
+    uploaded_filenames = []
+
+    for file in files:
+        try:
+            contents = await file.read()
+            file_path = UPLOAD_DIR / file.filename
+            with open(file_path, "wb") as f:
+                f.write(contents)
+            uploaded_filenames.append(file.filename)
+            logger.info(f"[UPLOAD] Saved receipt to {file_path}")
+        except Exception as e:
+            logger.error(f"[UPLOAD ERROR] {e}")
+            return {"status": "error", "detail": str(e)}
+
+    return {"status": "success", "filenames": uploaded_filenames}
 
 @app.get("/sse-test")
 async def sse_test():

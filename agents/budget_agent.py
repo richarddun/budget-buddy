@@ -27,38 +27,52 @@ oai_model = OpenAIModel(
     provider=OpenAIProvider(api_key=oai_key)
 )
 
+
 today = date.today().strftime("%B %d, %Y")
+
 
 budget_agent = Agent(
     model=oai_model,
 system_prompt = (
     "You are a proactive budgeting assistant with specialized financial insight. "
     f"Today is {today}. When reasoning about dates, assume today's date is accurate.\n"
-    "If the user asks for a budget review or mentions terms like 'review', 'overspent', 'missed payments', or 'flatline', "
-    "immediately call get_budget_details to provide an overview. "
-    "Budget summaries will include hints. Always call the matching tool to get full details if needed."
-    "For questions about specific expenses or transactions, use get_transactions, filtering by date if relevant. "
-    "You have full access to the user's budget ID — there is no need to ask them for it. "
-    "To create an expected upcoming transaction (e.g., a monthly bill, recurring charge), use create_scheduled_transaction. Supply account ID, date, and amount. Optionally include payee name or category. "
-    "Scheduled transactions must have dates no more than 7 days in the past and no more than 5 years into the future. If you're unsure, default to next month on the 1st. "
-    "You can get all the user's scheduled transactions with get_all_scheduled_transactions. "
-    "For any tool that involves an account ID (such as transaction related tools) assume you're operating on the account 'CURRENT-166' unless the user specifies otherwise. "
-    "Use available tools freely and confidently. "
-    "Avoid unnecessary repetition or redundant calls. "
-    "Speak clearly, keep responses concise, and prioritize utility and financial clarity.\n"
 
-    "If the user asks about overspending, overbudgeting, category issues, or mentions 'where am I overspending', call get_overspent_categories to provide a list of problem areas. "
-    "If the user mentions modifying a scheduled payment (such as 'change my rent', 'edit my Netflix payment', or 'update my scheduled transactions'), call update_scheduled_transaction. "
-    "If the user mentions canceling a future bill or subscription ('cancel', 'stop', 'delete a scheduled transaction'), call delete_scheduled_transaction. "
-    "If the user says they want to add a real transaction ('log my coffee', 'record a grocery purchase', 'add a transaction'), call create_transaction, assuming today's date unless they specify otherwise. "
-    "If the user asks to remove or delete a real transaction ('delete a wrong transaction', 'remove an expense'), call delete_transaction. "
-    "Default account is CURRENT-166 unless the user specifies otherwise for transaction-related tools. "
-    'If the user mentions saving for something, setting a savings target, or mentions a goal amount (e.g., "save €500 for vacation", "set a target for Christmas shopping"), call update_category to set a goal target.'
-    'If the user mentions increasing or adjusting a monthly budget for a category (e.g., "increase my groceries budget to €500 for May", "adjust the eating out budget for next month"), call update_month_category.'
-    'When interpreting amounts, assume the currency is in euros unless otherwise specified.'
-    'When the month is not explicitly specified, assume the current month unless the user says otherwise.'
-    "When suggesting actions, be proactive but respectful — e.g., 'Would you like me to help you log that transaction?' or 'Would you like me to update that for you?'"
+    "Default behavior assumptions:\n"
+    "- Default account name is 'CURRENT-166' unless the user specifies another.\n"
+    "- All transaction-related tools (create_transaction, delete_transaction, etc.) require **account_id** in **UUID format** — not the account name.\n"
+    "- If you only have the account name, call get_accounts first to retrieve the correct UUID before proceeding.\n"
+
+    "If the user asks for a budget review or mentions terms like 'review', 'overspent', 'missed payments', or 'flatline', "
+    "immediately call get_budget_details to provide an overview.\n"
+
+    "Budget summaries will include hints. Always call the matching tool to get full details if needed.\n"
+    "For questions about specific expenses or transactions, use get_transactions, filtering by date if relevant.\n"
+    "You have full access to the user's budget ID — there is no need to ask them for it.\n"
+
+    "To create an expected upcoming transaction (e.g., a monthly bill, recurring charge), use create_scheduled_transaction. "
+    "Supply account ID, date, and amount. Optionally include payee name or category. "
+    "Scheduled transactions must have dates no more than 7 days in the past and no more than 5 years into the future. "
+    "If unsure, default to the 1st of next month.\n"
+
+    "You can get all scheduled transactions with get_all_scheduled_transactions.\n"
+
+    "Use available tools freely and confidently. "
+    "Avoid unnecessary repetition or redundant calls.\n"
+
+    "If the user asks about overspending, overbudgeting, or mentions 'where am I overspending', call get_overspent_categories.\n"
+    "If the user mentions modifying or canceling a scheduled payment, use update_scheduled_transaction or delete_scheduled_transaction as appropriate.\n"
+    "If the user wants to log a real-world transaction, use create_transaction, using today's date if not otherwise specified.\n"
+    "If the user wants to delete a real transaction, use delete_transaction.\n"
+
+    'If the user mentions saving for something or setting a target goal (e.g., "save €500 for vacation"), call update_category.\n'
+    'If the user mentions adjusting a monthly category budget (e.g., "increase groceries budget for May"), call update_month_category.\n'
+
+    "When interpreting amounts, assume euros unless otherwise stated.\n"
+    "If no month is specified, assume the current month.\n"
+
+    "When suggesting actions, be proactive but respectful — e.g., 'Would you like me to help you log that transaction?' or 'Would you like me to update that for you?'\n"
 )
+
 )
 
 # --- Instantiate YNAB SDK Client Once ---
@@ -322,8 +336,20 @@ class CreateTransactionInput(BaseModel):
 
 @budget_agent.tool_plain
 def create_transaction(input: CreateTransactionInput):
-    """Log a new real-world transaction into the budget."""
+    """Log a new real-world transaction into the budget. Requires account_id UUID, not account name."""
     logger.info(f"[TOOL] create_transaction called for account {input.account_id} on {input.date}")
+
+    # 🔥 Validate and auto-fix account_id if needed
+    if "-" not in input.account_id:
+        logger.warning("[TOOL] Provided account_id does not look like a UUID. Attempting lookup...")
+        accounts = client.get_accounts(BUDGET_ID)
+        matching_account = next((acct for acct in accounts if acct["name"] == input.account_id), None)
+        if matching_account:
+            input.account_id = matching_account["id"]
+            logger.info(f"[TOOL] Matched account name to UUID: {input.account_id}")
+        else:
+            logger.error(f"[TOOL ERROR] No account found matching name {input.account_id}")
+            return {"error": f"No account found matching name {input.account_id}. Please check your account names."}
 
     amount_milliunits = int(input.amount_eur * 1000)
 
@@ -347,6 +373,7 @@ def create_transaction(input: CreateTransactionInput):
     except Exception as e:
         logger.error(f"Failed to create transaction: {e}")
         return {"error": "Unable to create the transaction."}
+
 
 
 class DeleteTransactionInput(BaseModel):
