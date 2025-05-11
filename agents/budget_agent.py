@@ -24,7 +24,9 @@ BUDGET_ID = os.getenv("YNAB_BUDGET_ID")
 
 # --- LLM Setup ---
 oai_model = OpenAIModel(
-    model_name='gpt-4.1-mini-2025-04-14',
+    #model_name='gpt-4.1-mini-2025-04-14',
+    model_name='gpt-4.1-2025-04-14',
+    
     provider=OpenAIProvider(api_key=oai_key)
 )
 
