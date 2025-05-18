@@ -7,20 +7,31 @@ import time
 import asyncio
 import os
 from datetime import date, timedelta
-from typing import Optional
+from typing import Optional, Any, Dict, List
 from dotenv import load_dotenv
 from ynab_sdk_client import YNABSdkClient  # your wrapper
 from ynab.exceptions import ApiException, BadRequestException
 from urllib3.exceptions import ProtocolError
 import socket
-from ynab.models import PostScheduledTransactionWrapper, SaveScheduledTransaction 
+from ynab.models.post_scheduled_transaction_wrapper import PostScheduledTransactionWrapper
+from ynab.models.save_scheduled_transaction import SaveScheduledTransaction
 from ynab.models.patch_month_category_wrapper import PatchMonthCategoryWrapper
+from ynab.models.scheduled_transaction_frequency import ScheduledTransactionFrequency
+from ynab.models.transaction_flag_color import TransactionFlagColor
+from ynab.models.post_transactions_wrapper import PostTransactionsWrapper
+from ynab.models.save_transaction_with_optional_fields import SaveTransactionWithOptionalFields
+from ynab.models.save_transaction_with_id_or_import_id import SaveTransactionWithIdOrImportId
+
+
 import logging
 logger = logging.getLogger("uvicorn.error")
 
 load_dotenv()
 oai_key = os.getenv("OAI_KEY")
-BUDGET_ID = os.getenv("YNAB_BUDGET_ID")
+budget_id_env = os.getenv("YNAB_BUDGET_ID")
+if budget_id_env is None:
+    raise ValueError("YNAB_BUDGET_ID environment variable is not set, check your .env file!")
+BUDGET_ID: str = budget_id_env
 
 # --- LLM Setup ---
 oai_model = OpenAIModel(
@@ -205,7 +216,36 @@ def create_scheduled_transaction(input: CreateScheduledTransactionInput):
     logger.info(f"[TOOL] Creating scheduled transaction on account {input.account_id} for €{input.amount_eur} on {input.var_date}")
 
     amount_milliunits = int(input.amount_eur * 1000)
-
+    
+    # Map string frequency to enum value
+    frequency_map = {
+        "monthly": ScheduledTransactionFrequency.MONTHLY,
+        "weekly": ScheduledTransactionFrequency.WEEKLY,
+        "yearly": ScheduledTransactionFrequency.YEARLY,
+        "every_other_month": ScheduledTransactionFrequency.EVERYOTHERMONTH,
+        "every_other_week": ScheduledTransactionFrequency.EVERYOTHERWEEK,
+        "every_4_weeks": ScheduledTransactionFrequency.EVERY4WEEKS,
+        "twice_a_month": ScheduledTransactionFrequency.TWICEAMONTH,
+        "daily": ScheduledTransactionFrequency.DAILY,
+        "never": ScheduledTransactionFrequency.NEVER
+    }
+    
+    # Default to monthly if not found
+    frequency_enum = frequency_map.get(input.frequency.lower(), ScheduledTransactionFrequency.MONTHLY)
+    # Handle flag color enum conversion
+    flag_color_enum = None
+    if input.flag_color:
+        # Common flag colors in YNAB are: red, orange, yellow, green, blue, purple
+        flag_color_map = {
+            "red": TransactionFlagColor.RED,
+            "orange": TransactionFlagColor.ORANGE,
+            "yellow": TransactionFlagColor.YELLOW,
+            "green": TransactionFlagColor.GREEN,
+            "blue": TransactionFlagColor.BLUE,
+            "purple": TransactionFlagColor.PURPLE
+        }
+        flag_color_enum = flag_color_map.get(input.flag_color.lower())
+    
     detail = SaveScheduledTransaction(
         account_id=input.account_id,
         date=input.var_date,
@@ -214,12 +254,12 @@ def create_scheduled_transaction(input: CreateScheduledTransactionInput):
         payee_name=input.payee_name,
         category_id=input.category_id,
         memo=input.memo,
-        flag_color=input.flag_color,
-        frequency=input.frequency
+        flag_color=flag_color_enum,
+        frequency=frequency_enum
     )
+    wrapper = PostScheduledTransactionWrapper(scheduled_transaction=detail)
     try:
-        wrapper = PostScheduledTransactionWrapper(scheduled_transaction=detail)
-        response = client.create_scheduled_transaction(BUDGET_ID, wrapper)
+        response: Any = client.create_scheduled_transaction(BUDGET_ID, wrapper)
     except BadRequestException as e:
         logger.warning(f"[TOOL ERROR] YNAB rejected scheduled transaction: {e}")
         logger.warning(f"[TOOL ERROR] Payload was: {wrapper.to_dict()}")
@@ -229,7 +269,7 @@ def create_scheduled_transaction(input: CreateScheduledTransactionInput):
 }
     return {
     "status": "Scheduled transaction created successfully!",
-    "data": response.to_dict()
+    "data": response.to_dict() if hasattr(response, 'to_dict') else response
 } 
 
 class GetOverspentCategoriesInput(BaseModel):
@@ -346,9 +386,9 @@ def create_transaction(input: CreateTransactionInput):
     if "-" not in input.account_id:
         logger.warning("[TOOL] Provided account_id does not look like a UUID. Attempting lookup...")
         accounts = client.get_accounts(BUDGET_ID)
-        matching_account = next((acct for acct in accounts if acct["name"] == input.account_id), None)
+        matching_account = next((acct for acct in accounts if acct.get("name") == input.account_id), None) # type: ignore
         if matching_account:
-            input.account_id = matching_account["id"]
+            input.account_id = matching_account["id"] # type: ignore
             logger.info(f"[TOOL] Matched account name to UUID: {input.account_id}")
         else:
             logger.error(f"[TOOL ERROR] No account found matching name {input.account_id}")
@@ -368,7 +408,7 @@ def create_transaction(input: CreateTransactionInput):
     }
 
     try:
-        created = client.transactions_api.create_transaction(BUDGET_ID, transaction)
+        created = client.transactions_api.create_transaction(BUDGET_ID, transaction) #type: ignore
         return {
             "status": "Transaction created successfully.",
             "data": created.to_dict()
@@ -440,7 +480,7 @@ def update_category(input: UpdateCategoryInput):
     }
 
     if input.goal_type:
-        data["category"]["goal_type"] = input.goal_type
+        data["category"]["goal_type"] = input.goal_type #type: ignore
     if input.goal_target is not None:
         # Convert euros to milliunits
         data["category"]["goal_target"] = int(input.goal_target * 1000)
@@ -497,16 +537,3 @@ def update_month_category(input: UpdateMonthCategoryInput):
 #def get_all_budgets(input: GetAllBudgetsOnAccount):
 #    """Retrieve all budget details for high level overview, e.g. Budget ID(s), name, currency settings"""
 #    return client.get_all_budgets()
-
-#TODO - account for numeric output of budget amounts, i.e. -774210 = 774.21
-# --- Agent Execution ---
-async def main():
-    user_prompt = "What accounts are tied to my budget right now?"
-    async with budget_agent.run_stream(user_prompt) as result:
-        async for message in result.stream_text(delta=True):
-            for char in message:
-                print(char, end="", flush=True)
-                time.sleep(0.01)
-
-if __name__ == '__main__':
-    asyncio.run(main())
