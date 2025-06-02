@@ -105,6 +105,17 @@ ollama==0.1.7
 
 ## 🚀 Running Locally
 
+1. In the repository root folder, create a .env file
+2. Add your OpenAI API key, YNAB API token and main YNAB Budget ID like so:
+
+```
+YNAB_TOKEN={YNAB_API_KEY}
+OAI_KEY={OPENAI_API_KEY}
+YNAB_BUDGET_ID={MAIN_YNAB_BUDGET_ID}
+```
+
+3. Run the app
+
 ```bash
 uvicorn main:app --reload
 ```
