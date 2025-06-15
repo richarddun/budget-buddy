@@ -30,8 +30,8 @@ load_dotenv()
 oai_key = os.getenv("OAI_KEY")
 budget_id_env = os.getenv("YNAB_BUDGET_ID")
 if budget_id_env is None:
-    raise ValueError("YNAB_BUDGET_ID environment variable is not set, check your .env file!")
-BUDGET_ID: str = budget_id_env
+    logger.info("YNAB_BUDGET_ID environment variable is not set. YNAB features will be disabled.")
+BUDGET_ID: str | None = budget_id_env
 
 # --- LLM Setup ---
 oai_model = OpenAIModel(

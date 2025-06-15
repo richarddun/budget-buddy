@@ -19,6 +19,23 @@ from datetime import datetime
 from dotenv import load_dotenv
 load_dotenv()
 
+def check_api_keys():
+    """Return a warning message if API keys are missing."""
+    if os.getenv("OAI_KEY") is None:
+        logger.info("OpenAI API key missing. Returning instructional message.")
+        return (
+            "Looks like you don't have a valid OpenAI API key.  Go to platform.openai.com "
+            "and generate a new key, then add it to your .env file (in the root folder of the repository you cloned).  "
+            "Please try again then."
+        )
+    if os.getenv("YNAB_TOKEN") is None:
+        logger.info("YNAB API token missing. Returning instructional message.")
+        return (
+            "It looks like you haven't added a YNAB API token to your .env file, I can't view your budget without it.  "
+            "Go to https://api.ynab.com/ and generate a token, and add to your .env file.  Please try again then."
+        )
+    return None
+
 
 
 # --- Template Setup ---
@@ -118,6 +135,18 @@ async def sse(prompt: str, fresh: bool = False):
     logger.info(f"[SSE] Incoming stream request with prompt: {prompt}")
 
     incoming_prompt = prompt.strip()  # capture clean user input
+
+    missing_msg = check_api_keys()
+    if missing_msg:
+        async def event_stream_missing():
+            logger.info("[SSE] Missing API keys; sending static message")
+            lnbrk = "\n"
+            yield "retry: 1000\n\n"
+            yield f"event: message{lnbrk}data: {missing_msg}{lnbrk}{lnbrk}"
+            store_message(incoming_prompt, missing_msg)
+            yield f"event: done{lnbrk}data: done{lnbrk}{lnbrk}"
+
+        return StreamingResponse(event_stream_missing(), media_type="text/event-stream")
 
     if not fresh:
         history = format_chat_history(limit=10)

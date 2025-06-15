@@ -24,6 +24,8 @@ class YNABSdkClient:
         # All write/mutation operations (create/update/delete) are left as direct API calls.
 
         access_token = os.getenv("YNAB_TOKEN")
+        if access_token is None:
+            logger.info("YNAB_TOKEN not found in environment. YNAB API access will be disabled.")
         self.config = Configuration(access_token=access_token)
         self.api_client = ApiClient(self.config)
 
