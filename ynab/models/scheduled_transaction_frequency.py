@@ -1,0 +1,10 @@
+class ScheduledTransactionFrequency:
+    MONTHLY='monthly'
+    WEEKLY='weekly'
+    YEARLY='yearly'
+    EVERYOTHERMONTH='every_other_month'
+    EVERYOTHERWEEK='every_other_week'
+    EVERY4WEEKS='every_4_weeks'
+    TWICEAMONTH='twice_a_month'
+    DAILY='daily'
+    NEVER='never'

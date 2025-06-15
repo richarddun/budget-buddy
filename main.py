@@ -67,6 +67,10 @@ def init_db():
 BUDGET_ID = os.getenv("YNAB_BUDGET_ID")
 
 def store_message(prompt: str, response: str):
+    # Ensure database and table exist
+    if not DB_PATH.exists():
+        init_db()
+
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute("INSERT INTO messages (prompt, response) VALUES (?, ?)", (prompt, response))

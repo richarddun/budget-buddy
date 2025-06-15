@@ -27,7 +27,7 @@ import logging
 logger = logging.getLogger("uvicorn.error")
 
 load_dotenv()
-oai_key = os.getenv("OAI_KEY")
+oai_key = os.getenv("OAI_KEY", "")
 budget_id_env = os.getenv("YNAB_BUDGET_ID")
 if budget_id_env is None:
     logger.info("YNAB_BUDGET_ID environment variable is not set. YNAB features will be disabled.")
@@ -38,7 +38,7 @@ oai_model = OpenAIModel(
     #model_name='gpt-4.1-mini-2025-04-14',
     model_name='gpt-4.1-2025-04-14',
     
-    provider=OpenAIProvider(api_key=oai_key)
+    provider=OpenAIProvider(api_key=oai_key or "")
 )
 
 
