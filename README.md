@@ -89,15 +89,14 @@ Each sub-agent will:
 
 ```
 fastapi
-uvicorn==0.29.0
-python-dotenv==1.0.1
+uvicorn
+python-dotenv
 pydantic
 pydantic-ai
 httpx
-jinja2==3.1.3
-python-multipart==0.0.9
-ynab-sdk==0.0.1
-ollama==0.1.7
+jinja2
+python-multipart
+ynab-sdk
 ```
 
 ---
