@@ -44,7 +44,6 @@
 
 * `main.py` – FastAPI entrypoint
 * `budget_agent.py` – Core assistant + tools
-* `reasoning_agent.py` – DeepSeek-powered logic engine
 * `ynab_sdk_client.py` – Cached YNAB SDK wrapper
 * `chat.html` / `messages.html` – Stream-based chat UI
 * `.ynab_cache/` – Cached API responses
