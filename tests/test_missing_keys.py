@@ -1,6 +1,12 @@
 import importlib
 import sys
 import os
+
+# Ensure the project root is on the path so `import main` succeeds when tests
+# are executed from within the `tests` directory.
+ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir))
+if ROOT_DIR not in sys.path:
+    sys.path.insert(0, ROOT_DIR)
 from fastapi.testclient import TestClient
 
 
