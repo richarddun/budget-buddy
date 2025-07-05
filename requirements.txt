@@ -1,4 +1,5 @@
 fastapi
+ynab
 uvicorn
 python-dotenv
 pydantic
