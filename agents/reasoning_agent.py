@@ -7,8 +7,9 @@ import os
 from dotenv import load_dotenv
 
 load_dotenv()
-
 deepseek_key = os.getenv("DEEPSEEK_API_KEY")
+if deepseek_key is None:
+    raise ValueError("DEEPSEEK_API_KEY environment variable is not set, check your .env file!")
 custom_http_client = AsyncClient(timeout=30)
 # DeepSeek behaves like OpenAI — just change base_url
 deepseek_model = OpenAIModel(

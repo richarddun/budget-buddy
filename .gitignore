@@ -5,3 +5,4 @@
 *.db
 *.pyc
 *.jpg
+.env.swp
