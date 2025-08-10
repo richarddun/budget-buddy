@@ -9,3 +9,4 @@ jinja2
 python-multipart
 ynab-sdk
 ollama
+ynab
