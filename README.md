@@ -99,6 +99,7 @@ jinja2==3.1.3
 python-multipart==0.0.9
 ynab-sdk==0.0.1
 ollama==0.1.7
+ynab
 ```
 
 ---
