@@ -8,5 +8,5 @@ This module centralizes configuration instead of relying solely on env vars.
 """
 
 # Example: BASE_PATH = "/budget-buddy"
-BASE_PATH = ""
+BASE_PATH = "/budget-buddy"
 

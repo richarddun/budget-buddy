@@ -130,10 +130,27 @@
                     width: 250px;
                     border-right: 1px solid #444;
                     border-bottom: none;
+                    position: static;
+                    transform: none;
+                    box-shadow: none;
+                    transition: width 0.25s ease, padding 0.25s ease;
                 }
 
                 #main {
                     height: 100vh;
+                    overflow: hidden;
+                }
+
+                .topbar,
+                .backdrop {
+                    display: none !important;
+                }
+
+                /* Collapsed state for desktop */
+                body.sidebar-collapsed #sidebar {
+                    width: 0;
+                    padding: 0;
+                    border: none;
                     overflow: hidden;
                 }
             }
@@ -165,9 +182,101 @@
                 opacity: 0;
                 transition: opacity 2s ease-out;
             }
+
+            /* Top bar with hamburger (mobile) */
+            .topbar {
+                display: flex;
+                align-items: center;
+                gap: 0.75em;
+                padding: 0.75em 1em;
+                border-bottom: 1px solid #333;
+                background: #1e1e2f;
+                position: sticky;
+                top: 0;
+                z-index: 500;
+            }
+            .topbar .title {
+                font-weight: 600;
+                color: #eee;
+            }
+            .menu-btn {
+                appearance: none;
+                background: #2e2e3e;
+                border: 1px solid #444;
+                color: #eee;
+                padding: 0.5em 0.7em;
+                border-radius: 6px;
+                cursor: pointer;
+            }
+            .menu-btn:active {
+                background: #3a3a4a;
+            }
+
+            /* Desktop-only helpers */
+            .desktop-only {
+                display: none;
+            }
+            @media (min-width: 769px) {
+                .desktop-only {
+                    display: inline-flex;
+                }
+                .desktop-toolbar {
+                    display: flex;
+                    align-items: center;
+                    gap: 0.5em;
+                    margin-bottom: 0.5em;
+                }
+            }
+
+            /* Backdrop for off-canvas */
+            .backdrop {
+                display: none;
+                position: fixed;
+                inset: 0;
+                background: rgba(0, 0, 0, 0.45);
+                backdrop-filter: blur(1px);
+                z-index: 900;
+            }
+            body.sidebar-open .backdrop {
+                display: block;
+            }
+
+            /* Mobile: off-canvas sidebar behavior */
+            @media (max-width: 768px) {
+                #sidebar {
+                    position: fixed;
+                    top: 0;
+                    left: 0;
+                    bottom: 0;
+                    width: 80%;
+                    max-width: 320px;
+                    border-right: 1px solid #444;
+                    border-bottom: none;
+                    box-shadow: 2px 0 10px rgba(0, 0, 0, 0.4);
+                    transform: translateX(-100%);
+                    transition: transform 0.25s ease;
+                    z-index: 1000;
+                    background: #2e2e3e; /* ensure solid bg */
+                }
+                body.sidebar-open #sidebar {
+                    transform: translateX(0);
+                }
+            }
         </style>
     </head>
     <body>
+        <div class="topbar">
+            <button
+                id="sidebar-toggle"
+                class="menu-btn"
+                aria-label="Toggle menu"
+                aria-controls="sidebar"
+                aria-expanded="false"
+            >
+                ☰
+            </button>
+            <div class="title">Budget Buddy</div>
+        </div>
         <div id="sidebar">
             <h2>Reports</h2>
             <button onclick="window.open('{{ request.url_for('get_budget_health') }}', '_blank')">
@@ -211,8 +320,21 @@
                 🔈 Voice Output: OFF
             </button>
         </div>
+        <div id="sidebar-backdrop" class="backdrop" aria-hidden="true"></div>
 
         <div id="main">
+            <div class="desktop-toolbar">
+                <button
+                    id="desktop-sidebar-toggle"
+                    class="menu-btn desktop-only"
+                    aria-label="Toggle sidebar"
+                    aria-controls="sidebar"
+                    aria-expanded="true"
+                    title="Toggle sidebar"
+                >
+                    ☰
+                </button>
+            </div>
             <h1>💬 AI Budgeting Assistant Chat</h1>
 
             <div id="chatbox" class="chatbox">
@@ -261,6 +383,55 @@
         </form>
 
         <script>
+            // === Sidebar toggle (mobile) ===
+            (function () {
+                const body = document.body;
+                const toggleBtn = document.getElementById("sidebar-toggle");
+                const backdrop = document.getElementById("sidebar-backdrop");
+
+                function openSidebar() {
+                    body.classList.add("sidebar-open");
+                    toggleBtn?.setAttribute("aria-expanded", "true");
+                }
+                function closeSidebar() {
+                    body.classList.remove("sidebar-open");
+                    toggleBtn?.setAttribute("aria-expanded", "false");
+                }
+                function toggleSidebar() {
+                    if (body.classList.contains("sidebar-open")) closeSidebar();
+                    else openSidebar();
+                }
+
+                toggleBtn?.addEventListener("click", toggleSidebar);
+                backdrop?.addEventListener("click", closeSidebar);
+                window.addEventListener("keydown", (e) => {
+                    if (e.key === "Escape") closeSidebar();
+                });
+            })();
+
+            // === Sidebar toggle (desktop) ===
+            (function () {
+                const body = document.body;
+                const desktopBtn = document.getElementById(
+                    "desktop-sidebar-toggle",
+                );
+                function setExpanded() {
+                    const expanded = !body.classList.contains(
+                        "sidebar-collapsed",
+                    );
+                    desktopBtn?.setAttribute(
+                        "aria-expanded",
+                        expanded ? "true" : "false",
+                    );
+                }
+                function toggleDesktopSidebar() {
+                    body.classList.toggle("sidebar-collapsed");
+                    setExpanded();
+                }
+                desktopBtn?.addEventListener("click", toggleDesktopSidebar);
+                setExpanded();
+            })();
+
             function setPrompt(text) {
                 const promptInput = document.getElementById("prompt");
                 promptInput.value = text;

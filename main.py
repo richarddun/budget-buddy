@@ -21,7 +21,6 @@ from dotenv import load_dotenv
 load_dotenv()
 from config import BASE_PATH
 
-<<<<<<< HEAD
 def check_api_keys():
     """Return a warning message if API keys are missing."""
     if os.getenv("OAI_KEY") is None:
@@ -38,10 +37,8 @@ def check_api_keys():
             "Go to https://api.ynab.com/ and generate a token, and add to your .env file.  Please try again then."
         )
     return None
-=======
 # Import budget health analyzer
 from budget_health_analyzer import BudgetHealthAnalyzer
->>>>>>> 72b520c (updating new methods and readme)
 
 
 

@@ -67,8 +67,17 @@ class BudgetHealthAnalyzer:
         self._budget_data = self.client.get_budget_details(budget_id)
 
         logger.info("Loading transaction data...")
-        # Get transactions from last 3 months for analysis
-        since_date = (datetime.now() - timedelta(days=90)).date().isoformat()
+        # Prefer loading transactions from the budget's first available month for fuller cashflow
+        since_date = None
+        try:
+            since_date = self._budget_data.get('first_month')  # e.g., '2024-08-01'
+        except Exception:
+            since_date = None
+
+        # Fallback: last 90 days if first_month is missing
+        if not since_date:
+            since_date = (datetime.now() - timedelta(days=90)).date().isoformat()
+
         self._transaction_data = self.client.get_transactions(budget_id, since_date)
 
         logger.info(f"Loaded {len(self._transaction_data or [])} transactions")
@@ -109,6 +118,88 @@ class BudgetHealthAnalyzer:
             recurring_transactions=recurring_transactions,
             calendar_heat_map=calendar_heat_map,
             health_score=health_score
+        )
+
+    def _calculate_cashflow_totals(self) -> Dict[str, float]:
+        """
+        Calculate inflows, outflows, and net from transactions.
+        Returns a dict with keys: inflows_all, outflows_all, net_all,
+        inflows_mtd, outflows_mtd, net_mtd
+        """
+        inflows_all = 0.0
+        outflows_all = 0.0
+        inflows_mtd = 0.0
+        outflows_mtd = 0.0
+
+        if not self._transaction_data:
+            return {
+                'inflows_all': 0.0,
+                'outflows_all': 0.0,
+                'net_all': 0.0,
+                'inflows_mtd': 0.0,
+                'outflows_mtd': 0.0,
+                'net_mtd': 0.0,
+            }
+
+        now = datetime.now()
+        month_start = now.replace(day=1).date()
+
+        for tx in self._transaction_data:
+            amt = tx.get('amount', 0) or 0.0
+            # Parse date safely
+            try:
+                tx_date = datetime.fromisoformat(tx.get('date', '')).date()
+            except Exception:
+                tx_date = None
+
+            if amt > 0:
+                inflows_all += amt
+                if tx_date and tx_date >= month_start:
+                    inflows_mtd += amt
+            elif amt < 0:
+                outflows_all += abs(amt)
+                if tx_date and tx_date >= month_start:
+                    outflows_mtd += abs(amt)
+
+        return {
+            'inflows_all': inflows_all,
+            'outflows_all': outflows_all,
+            'net_all': inflows_all - outflows_all,
+            'inflows_mtd': inflows_mtd,
+            'outflows_mtd': outflows_mtd,
+            'net_mtd': inflows_mtd - outflows_mtd,
+        }
+
+    def _render_cashflow_section(self) -> str:
+        """Render HTML snippet for the cashflow card"""
+        cf = self._calculate_cashflow_totals()
+        return (
+            f"""
+            <div class=\"metric\">
+                <span>All-time Inflows:</span>
+                <span class=\"metric-value\">€{cf['inflows_all']:,.2f}</span>
+            </div>
+            <div class=\"metric\">
+                <span>All-time Outflows:</span>
+                <span class=\"metric-value negative\">€{cf['outflows_all']:,.2f}</span>
+            </div>
+            <div class=\"metric\">
+                <span>All-time Net:</span>
+                <span class=\"metric-value {('positive' if cf['net_all'] >= 0 else 'negative')}\">€{cf['net_all']:,.2f}</span>
+            </div>
+            <div class=\"metric\" style=\"margin-top:12px; color:#666\">
+                <span>Month-to-date Inflows:</span>
+                <span class=\"metric-value\">€{cf['inflows_mtd']:,.2f}</span>
+            </div>
+            <div class=\"metric\">
+                <span>Month-to-date Outflows:</span>
+                <span class=\"metric-value negative\">€{cf['outflows_mtd']:,.2f}</span>
+            </div>
+            <div class=\"metric\">
+                <span>Month-to-date Net:</span>
+                <span class=\"metric-value {('positive' if cf['net_mtd'] >= 0 else 'negative')}\">€{cf['net_mtd']:,.2f}</span>
+            </div>
+            """
         )
 
     def _calculate_budget_totals(self) -> Tuple[float, float, float]:
@@ -549,6 +640,12 @@ class BudgetHealthAnalyzer:
                         <div class="progress-bar">
                             <div class="progress" style="width: {min(100, (metrics.total_spent / metrics.total_budgeted * 100) if metrics.total_budgeted > 0 else 0):.1f}%"></div>
                         </div>
+                    </div>
+
+                    <!-- Cashflow Overview (Transactions) -->
+                    <div class=\"card\">
+                        <h3>💵 Cashflow Overview (Transactions)</h3>
+                        {self._render_cashflow_section()}
                     </div>
 
                     <!-- Recent Spending Trends -->
