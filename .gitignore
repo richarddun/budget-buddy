@@ -6,3 +6,4 @@
 *.pyc
 *.jpg
 .env.swp
+*.bk
