@@ -1,0 +1,33 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Uploaded Receipts</title>
+    <style>
+      body { background-color: #1e1e2f; color: #ddd; font-family: 'Segoe UI', sans-serif; text-align: center; }
+      h1 { margin-top: 20px; }
+      .back { display:inline-block; margin:15px; padding:10px 20px; background:#4477dd; color:white; text-decoration:none; border-radius:8px; }
+      .item { display:inline-block; margin:10px; text-align:center; }
+      .thumb { width:150px; height:auto; border-radius:8px; box-shadow:0 0 5px #aaa; }
+      .name { margin-top:5px; font-size:0.9em; color:#ccc; }
+    </style>
+  </head>
+  <body>
+    <div><a class="back" href="{{ request.url_for('index') }}">⬅️ Back to Chat</a></div>
+    <h1>📂 Uploaded Receipts</h1>
+    {% if files %}
+      {% for f in files %}
+        {% set href = request.url_for('receipts', path=f) %}
+        <div class="item">
+          <a href="{{ href }}" target="_blank">
+            <img class="thumb" src="{{ href }}" alt="{{ f }}" />
+          </a>
+          <div class="name">{{ f }}</div>
+        </div>
+      {% endfor %}
+    {% else %}
+      <p>No receipts uploaded yet.</p>
+    {% endif %}
+  </body>
+  </html>
+

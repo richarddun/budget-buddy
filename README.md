@@ -120,6 +120,17 @@ uvicorn main:app --reload
 
 Open your browser at [http://localhost:8000](http://localhost:8000)
 
+### Deploying behind a reverse proxy (base path)
+
+If you serve the app under a subpath (e.g., `/budget-buddy/`), set the base path in `config.py`:
+
+```
+# config.py
+BASE_PATH = "/budget-buddy"
+```
+
+The app uses this value as FastAPI's `root_path`, and all links are generated with `request.url_for(...)`, so they respect the base path automatically. Leave `BASE_PATH = ""` for root deployment.
+
 ---
 
 ## 🙌 Acknowledgments

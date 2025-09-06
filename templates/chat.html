@@ -170,14 +170,14 @@
     <body>
         <div id="sidebar">
             <h2>Reports</h2>
-            <button onclick="window.open('/budget-health', '_blank')">
+            <button onclick="window.open('{{ request.url_for('get_budget_health') }}', '_blank')">
                 📊 Budget Health Report
             </button>
-            <button onclick="window.open('/subscriptions-report', '_blank')">
+            <button onclick="window.open('{{ request.url_for('get_subscriptions_report') }}', '_blank')">
                 🔄 Subscriptions Report
             </button>
             <button
-                onclick="window.open('/subscriptions-rest-of-month-report', '_blank')"
+                onclick="window.open('{{ request.url_for('get_subscriptions_rest_of_month_report') }}', '_blank')"
             >
                 📅 Rest of This Month
             </button>
@@ -201,7 +201,7 @@
             <h2>Export chat</h2>
             <button onclick="window.print()">🖨️ Export as PDF</button>
             <h2>Receipts</h2>
-            <button onclick="window.location.href='/uploads'">
+            <button onclick="window.location.href='{{ request.url_for('view_uploads') }}'">
                 📂 View Uploaded Receipts
             </button>
 
@@ -221,7 +221,7 @@
 
             <form
                 id="chat-form"
-                hx-post="/htmx-chat"
+                hx-post="{{ request.url_for('htmx_chat') }}"
                 hx-target="#chatbox"
                 hx-swap="beforeend"
             >
@@ -284,9 +284,8 @@
 
                     let fullMessage = "";
 
-                    const source = new EventSource(
-                        `/sse?prompt=${encodeURIComponent(prompt)}`,
-                    );
+                    const sseBase = "{{ request.url_for('sse') }}";
+                    const source = new EventSource(`${sseBase}?prompt=${encodeURIComponent(prompt)}`);
                     console.log("[SSE] Stream opened");
 
                     source.addEventListener("status", (e) => {
@@ -348,7 +347,7 @@
                 )
                     return;
 
-                fetch("/reset-session", {
+                fetch("{{ request.url_for('reset_session') }}", {
                     method: "POST",
                 })
                     .then((response) => response.json())
@@ -400,7 +399,7 @@
                     }
 
                     try {
-                        const response = await fetch("/upload-receipt", {
+                        const response = await fetch("{{ request.url_for('upload_receipt') }}", {
                             method: "POST",
                             body: formData,
                         });

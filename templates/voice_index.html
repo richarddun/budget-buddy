@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Voice Budget Buddy</title>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <style>
+        body { font-family: Arial, sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; }
+        #status { margin: 20px 0; padding: 10px; background-color: #f0f0f0; }
+        #transcript, #response { margin: 10px 0; padding: 10px; border: 1px solid #ddd; min-height: 50px; }
+        button { padding: 10px 20px; background: #4477dd; color: white; border: none; cursor: pointer; }
+    </style>
+  </head>
+  <body>
+    <h1>Voice Budget Buddy</h1>
+    <div id="status">Status: Not connected</div>
+    <button id="startBtn">Start Recording</button>
+    <button id="stopBtn" disabled>Stop Recording</button>
+    <h3>You said:</h3>
+    <div id="transcript"></div>
+    <h3>Budget Buddy says:</h3>
+    <div id="response"></div>
+
+    <script>
+      let socket;
+      const startBtn = document.getElementById('startBtn');
+      const stopBtn = document.getElementById('stopBtn');
+      const status = document.getElementById('status');
+      const transcript = document.getElementById('transcript');
+      const response = document.getElementById('response');
+
+      let mediaRecorder;
+      let audioChunks = [];
+
+      startBtn.onclick = async () => {
+        // Connect WebSocket using server-generated path (respects base path)
+        const wsProto = window.location.protocol === 'https:' ? 'wss' : 'ws';
+        const wsPath = "{{ request.url_for('websocket_endpoint') }}";
+        socket = new WebSocket(`${wsProto}://${window.location.host}${wsPath}`);
+        socket.onopen = () => { status.textContent = 'Status: Connected'; };
+        socket.onmessage = (event) => {
+          const data = JSON.parse(event.data);
+          if (data.type === 'transcript') {
+            transcript.textContent = data.text;
+          } else if (data.type === 'response') {
+            response.textContent = data.text;
+            const audio = new Audio(data.audio_url);
+            audio.play();
+          }
+        };
+
+        // Start recording
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        mediaRecorder = new MediaRecorder(stream);
+
+        mediaRecorder.ondataavailable = (event) => { audioChunks.push(event.data); };
+        mediaRecorder.onstop = () => {
+          const audioBlob = new Blob(audioChunks, { type: 'audio/wav' });
+          socket.send(audioBlob);
+          audioChunks = [];
+        };
+
+        mediaRecorder.start(1000); // Collect audio in 1-second chunks
+        startBtn.disabled = true;
+        stopBtn.disabled = false;
+      };
+
+      stopBtn.onclick = () => {
+        if (mediaRecorder && mediaRecorder.state !== 'inactive') { mediaRecorder.stop(); }
+        if (socket) { socket.close(); }
+        startBtn.disabled = false;
+        stopBtn.disabled = true;
+        status.textContent = 'Status: Disconnected';
+      };
+    </script>
+  </body>
+  </html>
+

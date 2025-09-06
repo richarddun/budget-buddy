@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Subscriptions & Scheduled Payments</title>
+    <style>
+      body { font-family: Arial, sans-serif; margin: 0; padding: 20px; background-color: #f5f5f5; }
+      .container { max-width: 1200px; margin: 0 auto; background: white; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); padding: 30px; }
+      .header { background: linear-gradient(135deg, #28a745 0%, #20c997 100%); color: white; padding: 30px; text-align: center; border-radius: 10px; margin: -30px -30px 30px -30px; }
+      .subscription-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(350px, 1fr)); gap: 20px; }
+      .subscription-card { border: 1px solid #ddd; border-radius: 8px; padding: 20px; background: #f8f9fa; }
+      .subscription-card h3 { margin-top: 0; color: #28a745; }
+      .confidence-high { border-left: 4px solid #28a745; }
+      .confidence-medium { border-left: 4px solid #ffc107; }
+      .confidence-low { border-left: 4px solid #dc3545; }
+      .badge { padding: 3px 8px; border-radius: 12px; font-size: 12px; color: white; }
+      .badge-monthly { background: #007bff; }
+      .badge-weekly { background: #17a2b8; }
+      .badge-quarterly { background: #6610f2; }
+      .badge-other { background: #6c757d; }
+      .amount-display { font-size: 24px; font-weight: bold; color: #dc3545; }
+      .back-link { display: inline-block; margin-bottom: 20px; padding: 10px 20px; background: #007bff; color: white; text-decoration: none; border-radius: 5px; }
+      .summary { background: #e7f3ff; padding: 15px; border-radius: 8px; margin-bottom: 20px; }
+      .filters { text-align: center; margin: 20px 0; padding: 15px; background: #f8f9fa; border-radius: 8px; }
+      .filters button { margin: 0 5px; padding: 8px 16px; border-radius: 4px; cursor: pointer; }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <div class="header">
+        <h1>🔄 Subscriptions & Scheduled Payments</h1>
+        <p>Detected recurring payments based on amount similarity (±€3) over 2+ months</p>
+      </div>
+
+      <div class="filters">
+        <strong>📋 View Filter:</strong>
+        {% set all_bg = '#007bff' if filter_view == 'all' else '#fff' %}
+        {% set all_color = 'white' if filter_view == 'all' else '#007bff' %}
+        {% set month_bg = '#28a745' if filter_view == 'rest_of_month' else '#fff' %}
+        {% set month_color = 'white' if filter_view == 'rest_of_month' else '#28a745' %}
+        <button onclick="location.href='{{ request.url_for('get_subscriptions_report') }}?filter_view=all'" style="border: 1px solid #007bff; background: {{ all_bg }}; color: {{ all_color }};">
+          🗂️ All Subscriptions
+        </button>
+        <button onclick="location.href='{{ request.url_for('get_subscriptions_report') }}?filter_view=rest_of_month'" style="border: 1px solid #28a745; background: {{ month_bg }}; color: {{ month_color }};">
+          📅 Rest of This Month
+        </button>
+      </div>
+
+      <div class="summary">
+        <strong>📊 Summary:</strong>
+        {% if filter_view == 'rest_of_month' %}
+          Showing {{ subscriptions|length }} subscriptions for rest of month (day {{ today_day + 1 }}-28)
+        {% else %}
+          Found {{ subscriptions|length }} potential subscriptions/scheduled payments
+        {% endif %}
+        <br><strong>🔍 Detection Criteria:</strong> 2+ occurrences, 2+ months, ±€3 amount tolerance
+        <br><strong>📅 Generated:</strong> {{ generated_at_str }}
+        {% if filter_view == 'rest_of_month' %}
+          <br><strong>🎯 Filter:</strong> Showing only subscriptions due after today (day {{ today_day }}) through day 28
+        {% endif %}
+      </div>
+
+      <div class="subscription-grid">
+        {% if subscriptions %}
+          {% for sub in subscriptions %}
+            {% set confidence_class = 'confidence-high' if sub.confidence_score >= 70 else ('confidence-medium' if sub.confidence_score >= 50 else 'confidence-low') %}
+            {% set badge_class = 'badge-other' %}
+            {% if 'Monthly' in sub.subscription_type %}
+              {% set badge_class = 'badge-monthly' %}
+            {% elif 'Weekly' in sub.subscription_type %}
+              {% set badge_class = 'badge-weekly' %}
+            {% elif 'Quarterly' in sub.subscription_type %}
+              {% set badge_class = 'badge-quarterly' %}
+            {% endif %}
+
+            <div class="subscription-card {{ confidence_class }}">
+              <h3>{{ sub.payee_name }}</h3>
+              <div class="amount-display">{{ sub.amount_range_display }}</div>
+              <p><strong>Type:</strong> <span class="badge {{ badge_class }}">{{ sub.subscription_type }}</span></p>
+              <p><strong>Occurrences:</strong> {{ sub.occurrence_count }} times over {{ sub.month_span }} months</p>
+              <p><strong>Confidence:</strong> {{ sub.confidence_score }}%</p>
+              <p><strong>Average Interval:</strong> {{ sub.avg_interval_days }} days</p>
+              <p><strong>Period:</strong> {{ sub.first_seen }} to {{ sub.last_seen }}</p>
+              <p><strong>Months:</strong> {{ sub.months_covered | join(', ') }}</p>
+            </div>
+          {% endfor %}
+        {% else %}
+          <div class="subscription-card">
+            <h3>{% if filter_view == 'rest_of_month' %}No Upcoming Subscriptions{% else %}No Subscriptions Detected{% endif %}</h3>
+            <p>
+              {% if filter_view == 'rest_of_month' %}
+                No recurring payments found for the rest of this month (days {{ today_day + 1 }}-28).
+                <br><em>💡 Try the "All Subscriptions" filter to see your complete subscription list.</em>
+              {% else %}
+                No recurring payment patterns found matching the criteria (2+ occurrences over 2+ months with ±€3 amount tolerance).
+              {% endif %}
+            </p>
+          </div>
+        {% endif %}
+      </div>
+    </div>
+  </body>
+  </html>
+

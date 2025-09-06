@@ -19,6 +19,7 @@ import json
 from datetime import datetime
 from dotenv import load_dotenv
 load_dotenv()
+from config import BASE_PATH
 
 <<<<<<< HEAD
 def check_api_keys():
@@ -46,7 +47,8 @@ from budget_health_analyzer import BudgetHealthAnalyzer
 
 # --- Template Setup ---
 templates = Jinja2Templates(directory="templates")
-app = FastAPI()
+# Use a global configuration for base path (see config.py)
+app = FastAPI(root_path=BASE_PATH)
 app.mount("/static", StaticFiles(directory="static"), name="static")
 LOG_FILE = "chat_history_log.json"
 DB_PATH = Path("chat_history.db")
@@ -129,26 +131,22 @@ def get_budget():
     return buddy.get_budget_details(BUDGET_ID)
 
 @app.get("/budget-health", response_class=HTMLResponse)
-async def get_budget_health():
-    """Generate budget health report as HTML"""
+async def get_budget_health(request: Request):
+    """Generate budget health report via Jinja template"""
     try:
         analyzer = BudgetHealthAnalyzer(BUDGET_ID)
         html_report = analyzer.generate_html_report()
-        return HTMLResponse(content=html_report)
+        return templates.TemplateResponse(
+            "budget_health.html",
+            {"request": request, "report_html": html_report},
+        )
     except Exception as e:
         logger.error(f"Error generating budget health report: {e}")
-        error_html = f"""
-        <html>
-        <head><title>Budget Health - Error</title></head>
-        <body style="font-family: Arial, sans-serif; margin: 20px;">
-        <h1>Budget Health Report - Error</h1>
-        <p>Sorry, there was an error generating your budget health report:</p>
-        <p style="color: red;">{str(e)}</p>
-        <a href="/" style="display: inline-block; margin-top: 20px; padding: 10px 20px; background: #007bff; color: white; text-decoration: none; border-radius: 5px;">← Back to Chat</a>
-        </body>
-        </html>
-        """
-        return HTMLResponse(content=error_html, status_code=500)
+        return templates.TemplateResponse(
+            "error.html",
+            {"request": request, "title": "Budget Health - Error", "error_message": str(e)},
+            status_code=500,
+        )
 
 @app.get("/debug-budget-health")
 async def debug_budget_health():
@@ -292,12 +290,12 @@ async def get_subscriptions_rest_of_month():
     return await get_subscriptions(filter_view="rest_of_month")
 
 @app.get("/subscriptions-rest-of-month-report", response_class=HTMLResponse)
-async def get_subscriptions_rest_of_month_report():
+async def get_subscriptions_rest_of_month_report(request: Request):
     """Convenient route for rest-of-month subscriptions report (HTML)"""
-    return await get_subscriptions_report(filter_view="rest_of_month")
+    return await get_subscriptions_report(request, filter_view="rest_of_month")
 
 @app.get("/subscriptions-report", response_class=HTMLResponse)
-async def get_subscriptions_report(filter_view: str = "all"):
+async def get_subscriptions_report(request: Request, filter_view: str = "all"):
     """Generate subscriptions report as HTML with filtering options"""
     try:
         analyzer = BudgetHealthAnalyzer(BUDGET_ID)
@@ -314,131 +312,39 @@ async def get_subscriptions_report(filter_view: str = "all"):
         else:
             subscriptions = all_subscriptions
 
-        # Create button styles based on active filter
-        all_btn_bg = '#007bff' if filter_view == 'all' else '#fff'
-        all_btn_color = 'white' if filter_view == 'all' else '#007bff'
-        month_btn_bg = '#28a745' if filter_view == 'rest_of_month' else '#fff'
-        month_btn_color = 'white' if filter_view == 'rest_of_month' else '#28a745'
+        # Prepare data for Jinja template
+        norm = []
+        for s in subscriptions:
+            norm.append({
+                'payee_name': s.get('payee_name', 'Unknown'),
+                'amount_range_display': s.get('amount_range_display', s.get('avg_amount_display', '€0.00')),
+                'subscription_type': s.get('subscription_type', 'Unknown'),
+                'occurrence_count': int(s.get('occurrence_count', 0)),
+                'month_span': int(s.get('month_span', 0)),
+                'confidence_score': int(s.get('confidence_score', 0)),
+                'avg_interval_days': s.get('avg_interval_days', 0),
+                'first_seen': s.get('first_seen', ''),
+                'last_seen': s.get('last_seen', ''),
+                'months_covered': s.get('months_covered', []),
+            })
 
-        # Generate HTML report
-        html_content = f"""
-        <!DOCTYPE html>
-        <html lang="en">
-        <head>
-            <meta charset="UTF-8">
-            <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <title>Subscriptions & Scheduled Payments</title>
-            <style>
-                body {{ font-family: Arial, sans-serif; margin: 0; padding: 20px; background-color: #f5f5f5; }}
-                .container {{ max-width: 1200px; margin: 0 auto; background: white; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); padding: 30px; }}
-                .header {{ background: linear-gradient(135deg, #28a745 0%, #20c997 100%); color: white; padding: 30px; text-align: center; border-radius: 10px; margin: -30px -30px 30px -30px; }}
-                .subscription-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(350px, 1fr)); gap: 20px; }}
-                .subscription-card {{ border: 1px solid #ddd; border-radius: 8px; padding: 20px; background: #f8f9fa; }}
-                .subscription-card h3 {{ margin-top: 0; color: #28a745; }}
-                .confidence-high {{ border-left: 4px solid #28a745; }}
-                .confidence-medium {{ border-left: 4px solid #ffc107; }}
-                .confidence-low {{ border-left: 4px solid #dc3545; }}
-                .badge {{ padding: 3px 8px; border-radius: 12px; font-size: 12px; color: white; }}
-                .badge-monthly {{ background: #007bff; }}
-                .badge-weekly {{ background: #17a2b8; }}
-                .badge-quarterly {{ background: #6610f2; }}
-                .badge-other {{ background: #6c757d; }}
-                .amount-display {{ font-size: 24px; font-weight: bold; color: #dc3545; }}
-                .back-link {{ display: inline-block; margin-bottom: 20px; padding: 10px 20px; background: #007bff; color: white; text-decoration: none; border-radius: 5px; }}
-                .summary {{ background: #e7f3ff; padding: 15px; border-radius: 8px; margin-bottom: 20px; }}
-            </style>
-        </head>
-        <body>
-            <div class="container">
-                <div class="header">
-                    <h1>🔄 Subscriptions & Scheduled Payments</h1>
-                    <p>Detected recurring payments based on amount similarity (±€3) over 2+ months</p>
-                </div>
+        context = {
+            'request': request,
+            'filter_view': filter_view,
+            'subscriptions': norm,
+            'today_day': datetime.now().day,
+            'generated_at_str': datetime.now().strftime('%Y-%m-%d at %H:%M:%S'),
+        }
 
-                <!-- Filter Controls -->
-                <div style="text-align: center; margin: 20px 0; padding: 15px; background: #f8f9fa; border-radius: 8px;">
-                    <strong>📋 View Filter:</strong>
-                    <button onclick="location.href='/subscriptions-report?filter_view=all'"
-                            style="margin: 0 5px; padding: 8px 16px; border-radius: 4px; border: 1px solid #007bff; background: {all_btn_bg}; color: {all_btn_color}; cursor: pointer;">
-                        🗂️ All Subscriptions
-                    </button>
-                    <button onclick="location.href='/subscriptions-report?filter_view=rest_of_month'"
-                            style="margin: 0 5px; padding: 8px 16px; border-radius: 4px; border: 1px solid #28a745; background: {month_btn_bg}; color: {month_btn_color}; cursor: pointer;">
-                        📅 Rest of This Month
-                    </button>
-                </div>
-
-                <div class="summary">
-                    <strong>📊 Summary:</strong> {f"Showing {len(subscriptions)} subscriptions for rest of month (day {datetime.now().day + 1}-28)" if filter_view == "rest_of_month" else f"Found {len(subscriptions)} potential subscriptions/scheduled payments"}
-                    <br><strong>🔍 Detection Criteria:</strong> 2+ occurrences, 2+ months, ±€3 amount tolerance
-                    <br><strong>📅 Generated:</strong> {datetime.now().strftime('%Y-%m-%d at %H:%M:%S')}
-                    {f'<br><strong>🎯 Filter:</strong> Showing only subscriptions due after today (day {datetime.now().day}) through day 28' if filter_view == "rest_of_month" else ''}
-                </div>
-
-                <div class="subscription-grid">
-        """
-
-        if subscriptions:
-            for sub in subscriptions:
-                confidence_class = "confidence-high" if sub['confidence_score'] >= 70 else ("confidence-medium" if sub['confidence_score'] >= 50 else "confidence-low")
-
-                # Determine badge class
-                badge_class = "badge-other"
-                if "Monthly" in sub['subscription_type']:
-                    badge_class = "badge-monthly"
-                elif "Weekly" in sub['subscription_type']:
-                    badge_class = "badge-weekly"
-                elif "Quarterly" in sub['subscription_type']:
-                    badge_class = "badge-quarterly"
-
-                html_content += f"""
-                    <div class="subscription-card {confidence_class}">
-                        <h3>{sub['payee_name']}</h3>
-                        <div class="amount-display">{sub['amount_range_display']}</div>
-                        <p><strong>Type:</strong> <span class="badge {badge_class}">{sub['subscription_type']}</span></p>
-                        <p><strong>Occurrences:</strong> {sub['occurrence_count']} times over {sub['month_span']} months</p>
-                        <p><strong>Confidence:</strong> {sub['confidence_score']}%</p>
-                        <p><strong>Average Interval:</strong> {sub['avg_interval_days']} days</p>
-                        <p><strong>Period:</strong> {sub['first_seen']} to {sub['last_seen']}</p>
-                        <p><strong>Months:</strong> {', '.join(sub['months_covered'])}</p>
-                    </div>
-                """
-        else:
-            no_subs_title = "No Upcoming Subscriptions" if filter_view == "rest_of_month" else "No Subscriptions Detected"
-            no_subs_desc = f"No recurring payments found for the rest of this month (days {datetime.now().day + 1}-28)." if filter_view == "rest_of_month" else "No recurring payment patterns found matching the criteria (2+ occurrences over 2+ months with ±€3 amount tolerance)."
-            no_subs_tip = '<p><em>💡 Try the "All Subscriptions" filter to see your complete subscription list.</em></p>' if filter_view == "rest_of_month" else ''
-
-            html_content += f"""
-                    <div class="subscription-card">
-                        <h3>{no_subs_title}</h3>
-                        <p>{no_subs_desc}</p>
-                        {no_subs_tip}
-                    </div>
-            """
-
-        html_content += """
-                </div>
-            </div>
-        </body>
-        </html>
-        """
-
-        return HTMLResponse(content=html_content)
+        return templates.TemplateResponse("subscriptions_report.html", context)
 
     except Exception as e:
         logger.error(f"Error generating subscriptions report: {e}")
-        error_html = f"""
-        <html>
-        <head><title>Subscriptions Report - Error</title></head>
-        <body style="font-family: Arial, sans-serif; margin: 20px;">
-        <h1>Subscriptions Report - Error</h1>
-        <p>Sorry, there was an error generating your subscriptions report:</p>
-        <p style="color: red;">{str(e)}</p>
-        <a href="/" style="display: inline-block; margin-top: 20px; padding: 10px 20px; background: #007bff; color: white; text-decoration: none; border-radius: 5px;">← Back to Chat</a>
-        </body>
-        </html>
-        """
-        return HTMLResponse(content=error_html, status_code=500)
+        return templates.TemplateResponse(
+            "error.html",
+            {"request": request, "title": "Subscriptions Report - Error", "error_message": str(e)},
+            status_code=500,
+        )
 
 @app.get("/test-subscriptions")
 async def test_subscriptions():
@@ -680,45 +586,9 @@ async def upload_receipt(files: List[UploadFile] = File(...)):
 from fastapi.responses import HTMLResponse
 
 @app.get("/uploads", response_class=HTMLResponse)
-async def view_uploads():
+async def view_uploads(request: Request):
     files = [f.name for f in UPLOAD_DIR.iterdir() if f.is_file()]
-
-    # Generate HTML gallery
-    images_html = ""
-    for file in files:
-        images_html += f"""
-        <div style="display:inline-block; margin:10px; text-align:center;">
-            <a href="/receipts/{file}" target="_blank">
-                <img src="/receipts/{file}" style="width:150px; height:auto; border-radius:8px; box-shadow:0 0 5px #aaa;">
-            </a>
-            <div style="margin-top:5px; font-size:0.9em; color:#ccc;">{file}</div>
-        </div>
-        """
-
-    page_html = f"""
-    <html>
-    <head>
-    <title>Uploaded Receipts</title>
-    <style>
-        body {{
-            background-color: #1e1e2f;
-            color: #ddd;
-            font-family: 'Segoe UI', sans-serif;
-            text-align: center;
-        }}
-        h1 {{
-            margin-top: 20px;
-        }}
-    </style>
-    </head>
-    <body>
-    <div id="backlink"><a href="/" style="display:inline-block; margin:15px; padding:10px 20px; background:#4477dd; color:white; text-decoration:none; border-radius:8px;">⬅️ Back to Chat</a></div>
-    <h1>📂 Uploaded Receipts</h1>
-    {images_html if images_html else "<p>No receipts uploaded yet.</p>"}
-    </body>
-    </html>
-    """
-    return HTMLResponse(content=page_html)
+    return templates.TemplateResponse("uploads.html", {"request": request, "files": files})
 
 @app.get("/sse-test")
 async def sse_test():
