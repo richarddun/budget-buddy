@@ -120,6 +120,32 @@ uvicorn main:app --reload
 
 Open your browser at [http://localhost:8000](http://localhost:8000)
 
+### Optional: Daily 7:00 AM Ingestion
+
+This project can run a time-based job inside the FastAPI/uvicorn process that executes daily at a configured time (defaults to 07:00) to fetch recent transactions and optionally let the AI agent review and adjust categories.
+
+Enable by adding to your `.env`:
+
+```
+# Turn the scheduler on
+ENABLE_DAILY_INGESTION=true
+
+# Time and timezone
+DAILY_INGESTION_HOUR=7
+DAILY_INGESTION_MINUTE=0
+SCHED_TZ=UTC  # e.g., Europe/Berlin, America/New_York
+
+# Ensure only one instance runs the job
+SCHEDULER_LEADER=true  # set false on other replicas/workers
+
+# Optional: allow the AI agent to perform tool-driven adjustments
+ENABLE_DAILY_AI_REVIEW=false
+```
+
+Notes:
+- If you run multiple uvicorn workers or replicas, only one should have `SCHEDULER_LEADER=true` to avoid duplicate executions.
+- When developing with `--reload`, prefer leaving the scheduler disabled or ensure only one process is designated as leader.
+
 ### Deploying behind a reverse proxy (base path)
 
 If you serve the app under a subpath (e.g., `/budget-buddy/`), set the base path in `config.py`:

@@ -91,6 +91,7 @@ system_prompt = (
 
 # --- Instantiate YNAB SDK Client Once ---
 client = YNABSdkClient()
+from localdb import payee_db
 
 # --- Tool Input Schemas and Bindings ---
 class GetAccountsInput(BaseModel):
@@ -447,6 +448,79 @@ def get_categories(input: GetCategoriesInput):
         "status": "Fetching list of categories...",
         "data": client.slim_categories_text(client.get_categories(BUDGET_ID))
     }
+
+# --- Local Payee Knowledge Tools ---
+
+class MatchLocalPayeeInput(BaseModel):
+    raw_payee: str
+    threshold: float | None = 0.6
+
+
+@budget_agent.tool_plain
+def match_local_payee(input: MatchLocalPayeeInput):
+    """Search local payee rules for a best match and suggested category. Uses exact, icontains, then regex with confidence scoring."""
+    try:
+        res = payee_db.match_payee(input.raw_payee, threshold=input.threshold or 0.6)
+        if not res:
+            return {"status": "no-match", "message": "No local rule matched above threshold"}
+        return {"status": "match", "data": res}
+    except Exception as e:
+        logger.error(f"match_local_payee failed: {e}")
+        return {"error": "Local payee match failed"}
+
+
+class UpsertLocalPayeeRuleInput(BaseModel):
+    pattern: str
+    match_type: str = "icontains"  # exact|icontains|regex
+    suggested_category: str | None = None
+    suggested_subcategory: str | None = None
+    suggested_memo: str | None = None
+    confidence: float | None = 0.8
+
+
+@budget_agent.tool_plain
+def upsert_local_payee_rule(input: UpsertLocalPayeeRuleInput):
+    """Create or update a local payee rule mapping a pattern to a suggested category/subcategory/memo."""
+    try:
+        rule_id = payee_db.upsert_rule(
+            pattern=input.pattern,
+            match_type=input.match_type,
+            suggested_category=input.suggested_category,
+            suggested_subcategory=input.suggested_subcategory,
+            suggested_memo=input.suggested_memo,
+            confidence=input.confidence or 0.8,
+        )
+        return {"status": "ok", "rule_id": rule_id}
+    except Exception as e:
+        logger.error(f"upsert_local_payee_rule failed: {e}")
+        return {"error": "Failed to upsert local payee rule"}
+
+
+class RecordLocalFeedbackInput(BaseModel):
+    raw_payee: str
+    chosen_category: str | None = None
+    chosen_subcategory: str | None = None
+    memo: str | None = None
+    generalize: bool | None = False
+    confidence: float | None = 0.9
+
+
+@budget_agent.tool_plain
+def record_local_feedback(input: RecordLocalFeedbackInput):
+    """Record user feedback by creating/updating a local rule (exact match by default, generalized 'icontains' if requested)."""
+    try:
+        rule_id = payee_db.record_feedback(
+            raw_payee=input.raw_payee,
+            chosen_category=input.chosen_category,
+            chosen_subcategory=input.chosen_subcategory,
+            memo=input.memo,
+            generalize=bool(input.generalize),
+            confidence=input.confidence or 0.9,
+        )
+        return {"status": "ok", "rule_id": rule_id}
+    except Exception as e:
+        logger.error(f"record_local_feedback failed: {e}")
+        return {"error": "Failed to record feedback"}
 
 class GetCategoryByIdInput(BaseModel):
     budget_id: str

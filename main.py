@@ -20,6 +20,8 @@ from datetime import datetime
 from dotenv import load_dotenv
 load_dotenv()
 from config import BASE_PATH
+from jobs.daily_ingestion import scheduler_loop
+from jobs.backfill_payee_rules import backfill_from_ynab
 
 def check_api_keys():
     """Return a warning message if API keys are missing."""
@@ -116,6 +118,31 @@ def load_recent_messages(limit=10):
 async def startup():
     init_db()
     logger.info("[INIT] Budget Buddy (SSE) startup complete.")
+    # Optionally start the daily ingestion scheduler
+    enable = os.getenv("ENABLE_DAILY_INGESTION", "false").lower() in ("1", "true", "yes", "on")
+    leader = os.getenv("SCHEDULER_LEADER", "true").lower() in ("1", "true", "yes", "on")
+    if enable and leader:
+        hour = int(os.getenv("DAILY_INGESTION_HOUR", "7"))
+        minute = int(os.getenv("DAILY_INGESTION_MINUTE", "0"))
+        logger.info(f"[INIT] Starting daily scheduler for {hour:02d}:{minute:02d}")
+        app.state.daily_task = asyncio.create_task(scheduler_loop(hour=hour, minute=minute))
+    else:
+        if not enable:
+            logger.info("[INIT] Daily scheduler disabled (set ENABLE_DAILY_INGESTION=true to enable)")
+        elif not leader:
+            logger.info("[INIT] Daily scheduler not leader on this instance (SCHEDULER_LEADER=false)")
+
+@app.on_event("shutdown")
+async def shutdown():
+    # Gracefully stop scheduler task if running
+    task = getattr(app.state, "daily_task", None)
+    if task and not task.done():
+        logger.info("[SHUTDOWN] Cancelling daily scheduler task...")
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
 
 @app.get("/", response_class=HTMLResponse)
 async def index(request: Request):
@@ -126,6 +153,28 @@ async def index(request: Request):
 def get_budget():
     buddy = ynab()
     return buddy.get_budget_details(BUDGET_ID)
+
+@app.post("/local/backfill-payee-rules")
+async def backfill_payee_rules_endpoint(
+    months: int = 12,
+    min_occurrences: int = 2,
+    generalize: bool = True,
+    dry_run: bool = False,
+):
+    if not BUDGET_ID:
+        return {"error": "YNAB_BUDGET_ID not configured"}
+    try:
+        summary = backfill_from_ynab(
+            budget_id=BUDGET_ID,
+            months=months,
+            min_occurrences=min_occurrences,
+            generalize=generalize,
+            dry_run=dry_run,
+        )
+        return summary
+    except Exception as e:
+        logger.exception(f"Backfill failed: {e}")
+        return {"error": str(e)}
 
 @app.get("/budget-health", response_class=HTMLResponse)
 async def get_budget_health(request: Request):
