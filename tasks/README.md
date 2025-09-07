@@ -140,9 +140,11 @@ Use this checklist to track progress. Update the checkbox and add the commit has
 
 18. [18-ui-quick-can-i-spend-today.md](18-ui-quick-can-i-spend-today.md) — Quick “Can I spend X today?” UI.
     
-    Complete : [ ]
+    Complete : [X]
     
-    Related Commit : _____
+    Related Commit : e7fbac07ab42b141acba0a0e405aa284e0306751
+    
+    Summary: Added a quick-check form to `templates/overview.html` that posts to `POST /api/forecast/simulate-spend` with today's date and an integer-cents amount. Validates input, includes accessible labels, and renders safe/unsafe, max safe today, and min-balance info with aria-live updates.
 
 19. [19-questionnaire-query-endpoints.md](19-questionnaire-query-endpoints.md) — Deterministic questionnaire query endpoints.
     
