@@ -156,9 +156,11 @@ Use this checklist to track progress. Update the checkbox and add the commit has
 
 20. [20-questionnaire-packs-assembly.md](20-questionnaire-packs-assembly.md) — Pack assembly (Loan Basics, Affordability).
     
-    Complete : [ ]
+    Complete : [X]
     
-    Related Commit : _____
+    Related Commit : d7fa2a8
+    
+    Summary: Added `q/packs.py` with pack assembly for `loan_application_basics` and `affordability_snapshot`. Exposed `GET /api/q/packs/{pack}?period=...` in `api/q.py`. Items include `value_cents`, window, `method`, and `evidence_ids`, reusing deterministic query endpoints. Implemented helpers for last-3-full-months window, monthly volatility (std dev of monthly expense totals), and min cleared balance over last 60 days.
 
 21. [21-questionnaire-exports-csv-pdf-hash.md](21-questionnaire-exports-csv-pdf-hash.md) — CSV/PDF exports with hash.
     
