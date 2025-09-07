@@ -41,10 +41,13 @@
       .pill.warn { background: rgba(234,179,8,0.2); color: #facc15; }
       .pill.good { background: rgba(34,197,94,0.2); color: #86efac; }
       .pill.bad { background: rgba(239,68,68,0.2); color: #fecaca; }
-      .alert { padding: 10px; border-radius: 8px; margin-bottom: 8px; background: #0b1222; border: 1px solid #1f2937; }
+      .alert { padding: 10px; border-radius: 8px; margin-bottom: 8px; background: #0b1222; border: 1px solid #1f2937; display:flex; justify-content:space-between; align-items:flex-start; gap:10px; }
       .alert.critical { border-color: var(--bad); }
       .alert.warning { border-color: var(--warn); }
       .alert.success { border-color: var(--good); }
+      .alert .meta { font-size: 12px; color: var(--muted); }
+      .alert .actions { display:flex; gap:6px; }
+      .btn-link { background:none; border:none; color:#93c5fd; cursor:pointer; padding:0; font-size:12px; text-decoration:underline; }
     </style>
   </head>
   <body>
@@ -90,8 +93,17 @@
       </div>
 
       <div class="panel" role="region" aria-label="Alerts panel">
-        <h2 class="section-title">Alerts</h2>
-        <div id="alerts"></div>
+        <div style="display:flex; justify-content:space-between; align-items:center; gap:8px">
+          <h2 class="section-title" style="margin:0">Alerts</h2>
+          <div class="muted" style="display:flex; align-items:center; gap:10px">
+            <label style="display:flex; align-items:center; gap:6px">
+              <input id="toggle-alert-notify" type="checkbox" />
+              <span>Browser notifications</span>
+            </label>
+            <span id="alerts-updated" aria-live="polite"></span>
+          </div>
+        </div>
+        <div id="alerts" role="list" aria-live="polite"></div>
       </div>
 
       <div class="panel">
@@ -366,13 +378,73 @@
         });
       }
 
-      async function loadUI() {
+      let pollTimer = null;
+      const SEEN_KEY = 'bb_alert_keys_seen';
+      const DISMISSED_KEY = 'bb_alert_keys_dismissed_session';
+      const NOTIFY_KEY = 'bb_alert_notify_enabled';
+
+      function getSet(key) {
+        try { const j = JSON.parse(localStorage.getItem(key) || '[]'); return new Set(Array.isArray(j)?j:[]); } catch { return new Set(); }
+      }
+      function setSet(key, set) {
+        try { localStorage.setItem(key, JSON.stringify(Array.from(set))); } catch {}
+      }
+      function getSessSet(key) {
+        try { const j = JSON.parse(sessionStorage.getItem(key) || '[]'); return new Set(Array.isArray(j)?j:[]); } catch { return new Set(); }
+      }
+      function setSessSet(key, set) {
+        try { sessionStorage.setItem(key, JSON.stringify(Array.from(set))); } catch {}
+      }
+
+      function alertKey(a) { return `${a.type}|${a.message}|${a.detail||''}`; }
+
+      function maybeNotify(newAlerts) {
+        const enabled = localStorage.getItem(NOTIFY_KEY) === '1';
+        if (!enabled || !('Notification' in window)) return;
+        if (Notification.permission === 'default') return; // only notify after explicit grant/deny handled
+        if (Notification.permission !== 'granted') return;
+        // Limit to first 3 to avoid spam
+        newAlerts.slice(0,3).forEach(a => {
+          try { new Notification(a.message, { body: a.detail || 'New alert', tag: alertKey(a) }); } catch {}
+        });
+      }
+
+      function renderAlerts(alerts, asOfISO) {
+        const alertBox = document.getElementById('alerts');
+        const updated = document.getElementById('alerts-updated');
+        if (updated) updated.textContent = asOfISO ? `Updated ${asOfISO.replace('T',' ').replace('Z',' UTC')}` : '';
+        alertBox.innerHTML = '';
+        if (alerts.length === 0) {
+          const ok = document.createElement('div'); ok.className = 'alert success'; ok.setAttribute('role','listitem'); ok.innerHTML = '<div>No alerts at this time.</div>';
+          alertBox.appendChild(ok);
+          return;
+        }
+        const dismissed = getSessSet(DISMISSED_KEY);
+        alerts.forEach(a => {
+          const key = alertKey(a);
+          if (dismissed.has(key)) return;
+          const div = document.createElement('div'); div.className = `alert ${a.type}`; div.tabIndex = 0; div.setAttribute('role','listitem');
+          const left = document.createElement('div');
+          left.innerHTML = `<strong>${a.message}</strong><div class="meta">${a.detail || ''}${asOfISO ? ` • ${asOfISO}` : ''}</div>`;
+          const actions = document.createElement('div'); actions.className = 'actions';
+          const btnGo = document.createElement('button'); btnGo.className = 'btn-link'; btnGo.type = 'button'; btnGo.textContent = 'View';
+          btnGo.addEventListener('click', () => { document.getElementById('runway-canvas').scrollIntoView({behavior:'smooth', block:'center'}); });
+          const btnDismiss = document.createElement('button'); btnDismiss.className = 'btn-link'; btnDismiss.type = 'button'; btnDismiss.textContent = 'Dismiss';
+          btnDismiss.addEventListener('click', () => { dismissed.add(key); setSessSet(DISMISSED_KEY, dismissed); div.remove(); });
+          actions.appendChild(btnGo); actions.appendChild(btnDismiss);
+          div.appendChild(left); div.appendChild(actions);
+          alertBox.appendChild(div);
+        });
+      }
+
+      async function loadUI(_fromPoll=false) {
         try {
           // Load overview for horizon + buffer
           const resOv = await fetch('{{ request.url_for("index") }}api/overview'.replace(/\/$/, ''));
           const ov = await resOv.json();
           const start = ov.horizon?.start; const end = ov.horizon?.end;
           const buffer = ov.buffer_floor_cents ?? 0;
+          const asOfISO = (ov.snapshot?.created_at) || new Date().toISOString();
 
           const url = new URL('{{ request.url_for("index") }}api/forecast/calendar'.replace(/\/$/, ''));
           url.searchParams.set('start', start);
@@ -476,21 +548,17 @@
             alerts.push({type:'warning', message: 'Low safe-to-spend today', detail: fmtCents(ov.safe_to_spend_today_cents)});
           }
 
-          const alertBox = document.getElementById('alerts');
-          alertBox.innerHTML = '';
-          if (alerts.length === 0) {
-            const ok = document.createElement('div'); ok.className = 'alert success'; ok.textContent = 'No alerts at this time.'; alertBox.appendChild(ok);
-          } else {
-            alerts.forEach(a => {
-              const div = document.createElement('div'); div.className = `alert ${a.type}`; div.tabIndex = 0; div.setAttribute('role','button');
-              div.innerHTML = `<strong>${a.message}</strong><div class=\"muted\">${a.detail || ''}</div>`;
-              div.addEventListener('click', () => {
-                // Drilldown: focus chart region
-                document.getElementById('runway-canvas').scrollIntoView({behavior:'smooth', block:'center'});
-              });
-              alertBox.appendChild(div);
-            });
-          }
+          // Newest first: treat alerts from this fetch as newest; stable order within batch
+          const seen = getSet(SEEN_KEY);
+          const keys = alerts.map(alertKey);
+          const newAlerts = alerts.filter(a => !seen.has(alertKey(a)));
+          // Render
+          renderAlerts(alerts, asOfISO);
+          // Notify on new alerts (from poll or first load) if enabled
+          if (newAlerts.length > 0) maybeNotify(newAlerts);
+          // Update seen keys
+          newAlerts.forEach(a => seen.add(alertKey(a)));
+          setSet(SEEN_KEY, seen);
 
           // Legend meta
           const meta = document.getElementById('legend-meta');
@@ -501,8 +569,26 @@
         }
       }
 
-      // Kick off
+      // Notifications toggle wiring
+      const notifyToggle = document.getElementById('toggle-alert-notify');
+      if (notifyToggle) {
+        const enabled = localStorage.getItem(NOTIFY_KEY) === '1';
+        notifyToggle.checked = enabled;
+        notifyToggle.addEventListener('change', async (e) => {
+          const on = notifyToggle.checked;
+          if (on && 'Notification' in window) {
+            if (Notification.permission === 'default') {
+              try { await Notification.requestPermission(); } catch {}
+            }
+          }
+          localStorage.setItem(NOTIFY_KEY, on ? '1' : '0');
+        });
+      }
+
+      // Kick off and start polling for updates
       loadUI();
+      if (pollTimer) clearInterval(pollTimer);
+      pollTimer = setInterval(() => { loadUI(true); }, 30000);
       // Redraw on resize for crisp canvas
       addEventListener('resize', () => {
         const canvas = document.getElementById('runway-canvas');
