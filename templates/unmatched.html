@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Unmatched Transactions</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+  <style>
+    body { font-family: system-ui, Arial, sans-serif; margin: 1rem; }
+    .row { display: grid; grid-template-columns: 10rem 10rem 1fr 1fr 12rem 10rem; gap: 0.5rem; align-items: center; padding: 0.25rem 0; }
+    .header { font-weight: bold; border-bottom: 1px solid #ddd; padding-bottom: 0.5rem; }
+    .muted { color: #666; font-size: 0.9em; }
+    button { padding: 0.25rem 0.5rem; }
+  </style>
+  <script>
+    async function loadUnmatched() {
+      const res = await fetch('/api/classify/unmapped?limit=50');
+      const data = await res.json();
+      const list = document.getElementById('list');
+      list.innerHTML = '';
+      const header = document.createElement('div');
+      header.className = 'row header';
+      header.innerHTML = '<div>Date</div><div>Source</div><div>Payee</div><div>Memo</div><div>CSV Category</div><div>Suggestion</div>';
+      list.appendChild(header);
+      for (const it of (data.items || [])) {
+        const row = document.createElement('div');
+        row.className = 'row';
+        const sugg = it.suggested_category_name ? `${it.suggested_category_name} (${Math.round((it.confidence||0)*100)}%)` : '—';
+        row.innerHTML = `
+          <div>${(it.posted_at||'').slice(0,10)}</div>
+          <div>${it.source||''}</div>
+          <div>${it.payee||''}</div>
+          <div class="muted">${it.memo||''}</div>
+          <div>${it.csv_category||''}</div>
+          <div>
+            ${sugg}
+            ${it.suggested_category_id && it.csv_category ? `<button onclick="acceptMap('${it.csv_category.replace(/'/g, "&#39;")}', ${it.suggested_category_id})">Accept</button>` : ''}
+          </div>
+        `;
+        list.appendChild(row);
+      }
+    }
+
+    async function acceptMap(csvCategory, internalId) {
+      const payload = { mapping_source: 'ynab-csv', external_id: csvCategory, internal_category_id: internalId };
+      const res = await fetch('/api/classify/accept', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+      const data = await res.json();
+      if (data.ok) {
+        alert('Mapping saved for ' + csvCategory);
+        loadUnmatched();
+      } else {
+        alert('Failed: ' + (data.error || 'unknown error'));
+      }
+    }
+
+    window.addEventListener('DOMContentLoaded', loadUnmatched);
+  </script>
+</head>
+<body>
+  <h1>Unmatched Transactions</h1>
+  <p class="muted">These transactions are currently mapped to the Holding category. Suggestions are based on payee rules and simple keyword matches. Accepting a suggestion will create a mapping for CSV category names.</p>
+  <div id="list"></div>
+</body>
+</html>
+
