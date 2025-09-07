@@ -35,10 +35,12 @@ Use this checklist to track progress. Update the checkbox and add the commit has
    Summary: Added `ingest/ynab_delta.py` implementing date-based delta sync using a `source_cursor` (ISO date with 1-day overlap for clock skew). Upserts transactions idempotently, advances cursor transactionally on success, and logs runs to `ingest_audit`. Wired into CLI via `budgetctl ingest ynab --delta`.
 
 5. [05-categories-snapshot-and-map.md](05-categories-snapshot-and-map.md) — Snapshot YNAB categories and build category_map.
+  
+   Complete : [X]
+  
+   Related Commit : 07e7cf897e29314e4dea7862a90b0288ccf93e8d
    
-   Complete : [ ]
-   
-   Related Commit : _____
+   Summary: Added `categories/sync_ynab.py` to fetch YNAB category groups and categories, upsert into `categories` with `source='ynab'` and hierarchy, and populate/refresh `category_map` by preferring existing mappings, then name-based internal matches, else mapping to a Holding category. Wired into CLI via `budgetctl categories sync-ynab`.
 
 6. [06-ingestion-csv-fallback.md](06-ingestion-csv-fallback.md) — CSV importer for YNAB exports.
    
