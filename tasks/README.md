@@ -28,9 +28,11 @@ Use this checklist to track progress. Update the checkbox and add the commit has
 
 4. [04-ingestion-delta-sync-ynab.md](04-ingestion-delta-sync-ynab.md) — Delta sync using cursor/knowledge.
    
-   Complete : [ ]
+   Complete : [X]
    
-   Related Commit : _____
+   Related Commit : a2a2928f92bc31f33c9658853857a49ee26e8a86
+   
+   Summary: Added `ingest/ynab_delta.py` implementing date-based delta sync using a `source_cursor` (ISO date with 1-day overlap for clock skew). Upserts transactions idempotently, advances cursor transactionally on success, and logs runs to `ingest_audit`. Wired into CLI via `budgetctl ingest ynab --delta`.
 
 5. [05-categories-snapshot-and-map.md](05-categories-snapshot-and-map.md) — Snapshot YNAB categories and build category_map.
    
