@@ -62,6 +62,14 @@
         <div class="grid">
           <div>
             <h2 class="section-title" id="lbl-runway">Runway</h2>
+            <div style="display:flex; gap:8px; align-items:center; margin-bottom:6px">
+              <label class="muted" for="forecast-mode">Mode</label>
+              <select id="forecast-mode" style="background:#0b1222; color:var(--text); border:1px solid #374151; border-radius:6px; padding:4px 8px">
+                <option value="det">Deterministic</option>
+                <option value="blend">Blended</option>
+              </select>
+              <span id="legend-band" class="badge" style="display:none">Blended band</span>
+            </div>
             <div class="chart-wrap" aria-labelledby="lbl-runway" aria-live="polite">
               <canvas id="runway-canvas" role="img" aria-label="Runway chart showing forecasted balances with markers"></canvas>
               <div id="markers" class="markers-layer" aria-hidden="false"></div>
@@ -255,7 +263,7 @@
         return out;
       }
 
-      function drawRunway(canvas, series, threshold, markers) {
+      function drawRunway(canvas, series, threshold, markers, band) {
         const ctx = canvas.getContext('2d');
         const w = canvas.clientWidth, h = canvas.clientHeight;
         canvas.width = w * devicePixelRatio; canvas.height = h * devicePixelRatio;
@@ -297,6 +305,19 @@
           const ty = yScale(threshold);
           ctx.moveTo(padL, ty); ctx.lineTo(w - padR, ty); ctx.stroke();
           ctx.setLineDash([]);
+        }
+
+        // Optional blended band (upper/lower)
+        if (band && band.upper && band.lower && band.upper.length > 1 && band.lower.length > 1) {
+          const upper = band.upper;
+          const lower = band.lower;
+          ctx.fillStyle = 'rgba(96,165,250,0.14)';
+          ctx.beginPath();
+          // Upper path
+          upper.forEach((p, i) => { const x = xScale(p[0]), y = yScale(p[1]); if (i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y); });
+          // Lower path reverse
+          for (let i = lower.length - 1; i >= 0; i--) { const p = lower[i]; const x = xScale(p[0]), y = yScale(p[1]); ctx.lineTo(x,y); }
+          ctx.closePath(); ctx.fill();
         }
 
         // Baseline series
@@ -364,7 +385,29 @@
           // Build time series from balances (sorted by date)
           const entries = fc.entries || [];
           const balances = Object.entries(fc.balances || {}).map(([d, b]) => [new Date(d).getTime(), b]).sort((a,b) => a[0]-b[0]);
-          const series = downsample(balances);
+          const modeEl = document.getElementById('forecast-mode');
+          const mode = (modeEl?.value || 'det');
+          let series = downsample(balances);
+          let band = null;
+          if (mode === 'blend') {
+            const urlB = new URL('{{ request.url_for("index") }}api/forecast/blended'.replace(/\/$/, ''));
+            urlB.searchParams.set('start', start);
+            urlB.searchParams.set('end', end);
+            const resB = await fetch(urlB.toString());
+            if (resB.ok) {
+              const bj = await resB.json();
+              const blend = bj.baseline_blended || {};
+              series = downsample(Object.entries(blend).sort().map(([d,v]) => [new Date(d).getTime(), v]));
+              const lower = Object.entries((bj.bands||{}).lower || {}).sort().map(([d,v]) => [new Date(d).getTime(), v]);
+              const upper = Object.entries((bj.bands||{}).upper || {}).sort().map(([d,v]) => [new Date(d).getTime(), v]);
+              band = { lower: downsample(lower), upper: downsample(upper) };
+              document.getElementById('legend-band').style.display = '';
+            } else {
+              document.getElementById('legend-band').style.display = 'none';
+            }
+          } else {
+            document.getElementById('legend-band').style.display = 'none';
+          }
 
           // Prepare markers for commitments and key events
           const markers = entries
@@ -381,7 +424,7 @@
               amount_cents: e.amount_cents
             }));
 
-          drawRunway(document.getElementById('runway-canvas'), series, buffer, markers);
+          drawRunway(document.getElementById('runway-canvas'), series, buffer, markers, band);
 
           // Upcoming list: commitments within 14 days; key events within lead window
           const today = new Date(); today.setHours(0,0,0,0);
@@ -466,6 +509,7 @@
         // Read last computed data from dataset if stored, otherwise trigger reload
         loadUI();
       });
+      document.getElementById('forecast-mode')?.addEventListener('change', () => loadUI());
     </script>
   </body>
   </html>

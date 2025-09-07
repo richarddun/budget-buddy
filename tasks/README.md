@@ -1,6 +1,6 @@
 # Budget Buddy — Tasks Index
 
-Use this checklist to track progress. Update the checkbox and add the commit hash that completes each task.
+Use this checklist to track progress. Update the checkbox and add the commit hash that completes each task.  Refer to budget_buddy_juggler_forecast_proactive_assistant_spec.md for the full specification if needed.
 
 1. [01-foundations-db-migrations.md](01-foundations-db-migrations.md) — Initialize core schema and migrations.
    
