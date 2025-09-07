@@ -4,6 +4,9 @@ import os
 import sqlite3
 from pathlib import Path
 
+from db.migrate import run_migrations
+from ingest.ynab_backfill import run_backfill
+
 
 def _connect(db_path: Path) -> sqlite3.Connection:
     db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -46,12 +49,19 @@ def backfill(db_path: Path, months: int = 1) -> int:
         print("YNAB credentials not configured (set YNAB_TOKEN and YNAB_BUDGET_ID).")
         return 2
 
-    with _connect(db_path) as conn:
-        cursor = _read_source_cursor(conn, source="ynab")
+    # Ensure schema is applied
+    run_migrations(db_path)
+
     print(f"[ingest:ynab:backfill] Backfilling last {months} month(s)…")
-    print(f"[db] source_cursor.ynab last_cursor = {cursor!r}")
-    print("[noop] No records changed (skeleton mode).")
-    return 0
+    try:
+        result = run_backfill(db_path, months=months)
+        print(
+            f"[success] Upserted {result.rows_upserted} rows. Window: {months} month(s)."
+        )
+        return 0 if result.status == "success" else 1
+    except Exception as e:
+        print(f"[error] Backfill failed: {e}")
+        return 1
 
 
 def ingest_from_csv(db_path: Path, csv_path: Path) -> int:
@@ -64,4 +74,3 @@ def ingest_from_csv(db_path: Path, csv_path: Path) -> int:
     print(f"[db] source_cursor.ynab-csv last_cursor = {cursor!r}")
     print("[noop] Parsed 0 rows (skeleton mode).")
     return 0
-
