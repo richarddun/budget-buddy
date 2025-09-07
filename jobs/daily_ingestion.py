@@ -6,6 +6,7 @@ from zoneinfo import ZoneInfo
 
 from ynab_sdk_client import YNABSdkClient
 from localdb import payee_db
+from jobs.nightly_snapshot import run_nightly_snapshot_async
 
 # Optional: use the existing agent to let AI review/adjust
 try:
@@ -141,3 +142,11 @@ async def scheduler_loop(hour: int = 7, minute: int = 0) -> None:
             raise
         except Exception as e:  # pragma: no cover
             logger.exception(f"Daily ingestion job crashed: {e}")
+            # Do not break the loop; still attempt snapshot so UI can detect staleness by timestamp
+        # After ingestion, run nightly forecast snapshot job
+        try:
+            await run_nightly_snapshot_async()
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:  # pragma: no cover
+            logger.exception(f"Nightly snapshot job failed: {e}")
