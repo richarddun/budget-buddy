@@ -188,9 +188,11 @@ Use this checklist to track progress. Update the checkbox and add the commit has
 
 24. [24-testing-suite-and-performance-budgets.md](24-testing-suite-and-performance-budgets.md) — Test suite + performance budgets.
     
-    Complete : [ ]
+    Complete : [X]
     
-    Related Commit : _____
+    Related Commit : 3a7f6dae6fb35460b4b6bd55f34cbabf0d62ffca
+    
+    Summary: Added `tests/test_ingestion_idempotence_csv.py` to verify CSV importer idempotence and `tests/test_performance_budgets.py` to enforce performance budgets (forecast 120‑day median ≤150ms, `/api/overview` JSON ≤200KB) using FastAPI TestClient with a synthetic dataset.
 
 25. [25-security-review-hardening.md](25-security-review-hardening.md) — Auth, CSRF, rate limits, privacy.
     
