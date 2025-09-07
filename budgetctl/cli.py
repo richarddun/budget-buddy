@@ -33,6 +33,13 @@ def build_parser() -> argparse.ArgumentParser:
     ynab_mode.add_argument("--backfill", action="store_true", help="Run backfill")
     ynab_parser.add_argument("--months", type=int, default=1, help="Backfill horizon in months")
     ynab_parser.add_argument("--from-csv", dest="from_csv", type=Path, help="Import from YNAB CSV export")
+    ynab_parser.add_argument(
+        "--account",
+        dest="csv_account",
+        type=str,
+        default=None,
+        help="Override account name for CSV rows",
+    )
     _add_common_db_arg(ynab_parser)
 
     # categories group
@@ -67,7 +74,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "ingest" and args.ingest_command == "ynab":
         # CSV import takes precedence when provided
         if args.from_csv:
-            return ingest_handlers.ingest_from_csv(args.db, args.from_csv)
+            return ingest_handlers.ingest_from_csv(args.db, args.from_csv, account_override=args.csv_account)
         if args.delta:
             return ingest_handlers.delta_sync(args.db)
         if args.backfill:
@@ -90,4 +97,3 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

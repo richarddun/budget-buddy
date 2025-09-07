@@ -6,6 +6,7 @@ from pathlib import Path
 from db.migrate import run_migrations
 from ingest.ynab_backfill import run_backfill
 from ingest.ynab_delta import run_delta
+from ingest.csv_importer import run_import as run_csv_import
 
 
 def delta_sync(db_path: Path) -> int:
@@ -53,13 +54,19 @@ def backfill(db_path: Path, months: int = 1) -> int:
         return 1
 
 
-def ingest_from_csv(db_path: Path, csv_path: Path) -> int:
+def ingest_from_csv(db_path: Path, csv_path: Path, account_override: str | None = None) -> int:
     if not csv_path.exists():
         print(f"CSV not found: {csv_path}")
         return 2
-    with _connect(db_path) as conn:
-        cursor = _read_source_cursor(conn, source="ynab-csv")
+
+    # Ensure schema is applied
+    run_migrations(db_path)
+
     print(f"[ingest:ynab:csv] Importing from {csv_path}…")
-    print(f"[db] source_cursor.ynab-csv last_cursor = {cursor!r}")
-    print("[noop] Parsed 0 rows (skeleton mode).")
-    return 0
+    try:
+        result = run_csv_import(db_path, csv_path, account_override=account_override)
+        print(f"[success] Upserted {result.rows_upserted} rows from CSV.")
+        return 0 if result.status == "success" else 1
+    except Exception as e:
+        print(f"[error] CSV import failed: {e}")
+        return 1
