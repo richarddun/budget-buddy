@@ -77,6 +77,10 @@ try:
     from api.overview import router as overview_router
 except Exception:
     overview_router = None
+try:
+    from api.key_events import router as key_events_router
+except Exception:
+    key_events_router = None
 
 # --- File upload Setup ---
 UPLOAD_DIR = Path("uploaded_receipts")
@@ -238,6 +242,8 @@ async def startup():
         app.include_router(forecast_router)
     if overview_router is not None:
         app.include_router(overview_router)
+    if key_events_router is not None:
+        app.include_router(key_events_router)
     # Optionally start the daily ingestion scheduler
     enable = os.getenv("ENABLE_DAILY_INGESTION", "false").lower() in ("1", "true", "yes", "on")
     leader = os.getenv("SCHEDULER_LEADER", "true").lower() in ("1", "true", "yes", "on")

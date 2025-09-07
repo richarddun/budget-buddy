@@ -51,7 +51,10 @@
     <div class="container">
       <div class="header">
         <h1 style="margin:0">📊 Budget Health</h1>
-        <a class="back" href="{{ request.url_for('index') }}">← Back to Chat</a>
+        <div style="display:flex; gap:8px; align-items:center">
+          <button id="btn-add-key-event" type="button" style="padding:8px 12px; border-radius:6px; background:#10b981; color:#031b17; font-weight:600; border:none; cursor:pointer">＋ Key Event</button>
+          <a class="back" href="{{ request.url_for('index') }}">← Back to Chat</a>
+        </div>
       </div>
 
       <!-- Existing analyzer report remains available below -->
@@ -91,6 +94,150 @@
         </div>
       </div>
     </div>
+
+    <!-- Key Event Modal -->
+    <div id="key-event-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.5); align-items:center; justify-content:center;">
+      <div role="dialog" aria-modal="true" aria-labelledby="ke-title" style="background:var(--panel); border:1px solid #1f2937; border-radius:10px; width:min(520px, 92vw); padding:16px; box-shadow:0 6px 30px rgba(0,0,0,0.5)">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px">
+          <div id="ke-title" class="section-title">Key Event</div>
+          <button id="ke-close" type="button" style="background:#111827; color:var(--text); border:1px solid #374151; border-radius:6px; padding:4px 8px; cursor:pointer">✕</button>
+        </div>
+        <form id="ke-form" style="display:grid; grid-template-columns:1fr 1fr; gap:10px">
+          <input type="hidden" name="id" />
+          <label style="grid-column:1 / -1">Name
+            <input name="name" required style="width:100%; padding:8px; border-radius:6px; border:1px solid #374151; background:#0b1222; color:var(--text)" />
+          </label>
+          <label>Event date
+            <input name="event_date" type="date" required style="width:100%; padding:8px; border-radius:6px; border:1px solid #374151; background:#0b1222; color:var(--text)" />
+          </label>
+          <label>Amount (cents)
+            <input name="planned_amount_cents" type="number" step="1" min="0" style="width:100%; padding:8px; border-radius:6px; border:1px solid #374151; background:#0b1222; color:var(--text)" />
+          </label>
+          <label>Repeat
+            <select name="repeat_rule" style="width:100%; padding:8px; border-radius:6px; border:1px solid #374151; background:#0b1222; color:var(--text)">
+              <option value="ONE_OFF">One-off</option>
+              <option value="ANNUAL">Annual</option>
+              <option value="MONTHLY">Monthly</option>
+              <option value="WEEKLY">Weekly</option>
+            </select>
+          </label>
+          <label>Lead time (days)
+            <input name="lead_time_days" type="number" min="0" step="1" style="width:100%; padding:8px; border-radius:6px; border:1px solid #374151; background:#0b1222; color:var(--text)" />
+          </label>
+          <label>Shift policy
+            <select name="shift_policy" style="width:100%; padding:8px; border-radius:6px; border:1px solid #374151; background:#0b1222; color:var(--text)">
+              <option value="AS_SCHEDULED">As scheduled</option>
+              <option value="PREV_BUSINESS_DAY">Prev business day</option>
+              <option value="NEXT_BUSINESS_DAY">Next business day</option>
+            </select>
+          </label>
+          <label>Account ID
+            <input name="account_id" type="number" step="1" min="1" style="width:100%; padding:8px; border-radius:6px; border:1px solid #374151; background:#0b1222; color:var(--text)" />
+          </label>
+          <label>Category ID
+            <input name="category_id" type="number" step="1" min="1" style="width:100%; padding:8px; border-radius:6px; border:1px solid #374151; background:#0b1222; color:var(--text)" />
+          </label>
+          <div style="grid-column:1 / -1; display:flex; justify-content:flex-end; gap:8px; margin-top:6px">
+            <button id="ke-delete" type="button" style="display:none; background:#7f1d1d; color:#fecaca; border:1px solid #ef4444; border-radius:6px; padding:8px 12px; cursor:pointer">Delete</button>
+            <button type="submit" style="background:#2563eb; color:white; border:none; border-radius:6px; padding:8px 12px; cursor:pointer">Save</button>
+          </div>
+          <div id="ke-error" class="muted" style="grid-column:1 / -1; color:#fecaca"></div>
+        </form>
+      </div>
+    </div>
+
+    <script>
+      // --- Key Event Modal ---
+      const modal = document.getElementById('key-event-modal');
+      const openBtn = document.getElementById('btn-add-key-event');
+      const closeBtn = document.getElementById('ke-close');
+      const form = document.getElementById('ke-form');
+      const delBtn = document.getElementById('ke-delete');
+      const errBox = document.getElementById('ke-error');
+
+      function openModal(prefill) {
+        form.reset(); errBox.textContent='';
+        if (prefill && prefill.id) {
+          form.elements['id'].value = prefill.id;
+          form.elements['name'].value = prefill.name || '';
+          form.elements['event_date'].value = prefill.event_date || '';
+          form.elements['planned_amount_cents'].value = prefill.planned_amount_cents ?? '';
+          form.elements['repeat_rule'].value = prefill.repeat_rule || 'ONE_OFF';
+          form.elements['lead_time_days'].value = prefill.lead_time_days ?? '';
+          form.elements['shift_policy'].value = prefill.shift_policy || 'AS_SCHEDULED';
+          form.elements['account_id'].value = prefill.account_id ?? '';
+          form.elements['category_id'].value = prefill.category_id ?? '';
+          delBtn.style.display = '';
+        } else {
+          delBtn.style.display = 'none';
+        }
+        modal.style.display = 'flex';
+      }
+      function closeModal() { modal.style.display = 'none'; }
+      openBtn?.addEventListener('click', () => openModal());
+      closeBtn?.addEventListener('click', closeModal);
+      modal?.addEventListener('click', (e) => { if (e.target === modal) closeModal(); });
+
+      function csrfHeader() {
+        const meta = document.querySelector('meta[name="csrf-token"]');
+        return meta ? { 'X-CSRF-Token': meta.getAttribute('content') } : {};
+      }
+
+      form?.addEventListener('submit', async (e) => {
+        e.preventDefault(); errBox.textContent='';
+        const data = Object.fromEntries(new FormData(form).entries());
+        // Normalize numbers/empties
+        if (!data.name || !data.event_date) { errBox.textContent = 'Name and date are required'; return; }
+        const payload = {
+          id: data.id ? Number(data.id) : undefined,
+          name: String(data.name),
+          event_date: String(data.event_date),
+          repeat_rule: data.repeat_rule || 'ONE_OFF',
+          planned_amount_cents: data.planned_amount_cents ? Number(data.planned_amount_cents) : undefined,
+          category_id: data.category_id ? Number(data.category_id) : undefined,
+          lead_time_days: data.lead_time_days ? Number(data.lead_time_days) : undefined,
+          shift_policy: data.shift_policy || 'AS_SCHEDULED',
+          account_id: data.account_id ? Number(data.account_id) : undefined,
+        };
+        try {
+          const res = await fetch('{{ request.url_for("index") }}api/key-events'.replace(/\/$/, ''), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', ...csrfHeader() },
+            body: JSON.stringify(payload),
+          });
+          if (!res.ok) {
+            const j = await res.json().catch(() => ({}));
+            throw new Error(j.detail || 'Error saving event');
+          }
+          closeModal();
+          // Refresh the UI to show effects in forecast
+          loadUI();
+        } catch (err) {
+          errBox.textContent = String(err.message || err);
+        }
+      });
+
+      delBtn?.addEventListener('click', async () => {
+        errBox.textContent='';
+        const id = form.elements['id'].value;
+        if (!id) { errBox.textContent = 'No ID'; return; }
+        if (!confirm('Delete this key event?')) return;
+        try {
+          const res = await fetch('{{ request.url_for("index") }}api/key-events/'.replace(/\/$/, '') + encodeURIComponent(id), {
+            method: 'DELETE',
+            headers: { ...csrfHeader() },
+          });
+          if (!res.ok) {
+            const j = await res.json().catch(() => ({}));
+            throw new Error(j.detail || 'Error deleting event');
+          }
+          closeModal();
+          loadUI();
+        } catch (err) {
+          errBox.textContent = String(err.message || err);
+        }
+      });
+    </script>
 
     <script>
       function fmtCents(cents) {

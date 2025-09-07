@@ -92,9 +92,11 @@ Use this checklist to track progress. Update the checkbox and add the commit has
 
 12. [12-chat-preload-daily-digest.md](12-chat-preload-daily-digest.md) — Preload daily digest in chat.
     
-    Complete : [ ]
+    Complete : [X]
     
-    Related Commit : _____
+    Related Commit : 3b40437
+    
+    Summary: On chat view load, the app now injects a non-editable Daily Digest system message derived from the latest `forecast_snapshot`. Implemented digest reconstruction in `main.py` and rendered it in `templates/chat.html` with balance, safe-to-spend, next cliff, min balance/date, top commitments (14 days), and key events in lead window.
 
 13. [13-key-events-api-crud-and-ui-modal.md](13-key-events-api-crud-and-ui-modal.md) — Key spend events CRUD API + modal.
     
