@@ -6,6 +6,7 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException, Query
 
 from q import queries as Q
+from q.packs import assemble_pack
 
 
 router = APIRouter()
@@ -107,3 +108,13 @@ def get_supporting_transactions(
 def get_household_fixed_costs():
     return Q.household_fixed_costs()
 
+
+@router.get("/api/q/packs/{pack}")
+def get_pack(
+    pack: str,
+    period: str = Query(None, description="Period token: 3m_full (default), Xm, or Xd"),
+):
+    resp = assemble_pack(pack, period)
+    if resp.get("error"):
+        raise HTTPException(status_code=404, detail=f"Unknown pack: {pack}")
+    return resp
