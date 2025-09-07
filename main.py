@@ -18,6 +18,7 @@ import os
 import json
 from datetime import datetime
 from dotenv import load_dotenv
+from db.migrate import run_migrations
 load_dotenv()
 from config import BASE_PATH
 from jobs.daily_ingestion import scheduler_loop
@@ -51,6 +52,8 @@ app = FastAPI(root_path=BASE_PATH)
 app.mount("/static", StaticFiles(directory="static"), name="static")
 LOG_FILE = "chat_history_log.json"
 DB_PATH = Path("chat_history.db")
+# Local source-of-truth database (for tasks/migrations schema)
+SOT_DB_PATH = Path("localdb/budget.db")
 
 # --- File upload Setup ---
 UPLOAD_DIR = Path("uploaded_receipts")
@@ -116,6 +119,17 @@ def load_recent_messages(limit=10):
 
 @app.on_event("startup")
 async def startup():
+    # Run foundational DB migrations for local SoT schema
+    try:
+        applied = run_migrations(SOT_DB_PATH)
+        if applied:
+            logger.info(f"[MIGRATIONS] Applied: {', '.join(applied)}")
+        else:
+            logger.info("[MIGRATIONS] No pending migrations")
+    except Exception as e:
+        logger.exception(f"[MIGRATIONS] Failed to run migrations: {e}")
+
+    # Initialize chat history DB used by the app
     init_db()
     logger.info("[INIT] Budget Buddy (SSE) startup complete.")
     # Optionally start the daily ingestion scheduler

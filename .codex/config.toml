@@ -1,0 +1,24 @@
+# Set the default model and provider
+# model = "gpt-5" 
+model = "codex-mini-latest"
+profile = "scripted"
+
+# Profiles
+[profiles.scripted]
+approval_policy = "never"
+sandbox_mode = "workspace-write"
+hide_agent_reasoning = true
+
+# Configure the Azure provider
+#[model_providers.azure]
+#name = "Azure"
+## Make sure you set the appropriate subdomain for this URL.
+#base_url = "https://YOUR_PROJECT_NAME.openai.azure.com/openai"
+#env_key = "AZURE_OPENAI_API_KEY"
+#query_params = { api-version = "2025-04-01-preview" }
+#wire_api = "responses"
+
+# Example of configuring an MCP server for MS Learn Docs
+#[mcp_servers.server-name]
+#command = "npx"
+#args = ["-y", "mcp-remote", "https://learn.microsoft.com/api/mcp"]
