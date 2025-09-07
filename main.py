@@ -60,6 +60,10 @@ try:
     from api.forecast import router as forecast_router
 except Exception:
     forecast_router = None
+try:
+    from api.overview import router as overview_router
+except Exception:
+    overview_router = None
 
 # --- File upload Setup ---
 UPLOAD_DIR = Path("uploaded_receipts")
@@ -141,6 +145,8 @@ async def startup():
     # Include routers after app init
     if forecast_router is not None:
         app.include_router(forecast_router)
+    if overview_router is not None:
+        app.include_router(overview_router)
     # Optionally start the daily ingestion scheduler
     enable = os.getenv("ENABLE_DAILY_INGESTION", "false").lower() in ("1", "true", "yes", "on")
     leader = os.getenv("SCHEDULER_LEADER", "true").lower() in ("1", "true", "yes", "on")
@@ -171,6 +177,10 @@ async def shutdown():
 async def index(request: Request):
     chat_history = load_recent_messages()
     return templates.TemplateResponse("chat.html", {"request": request, "chat_history": chat_history})
+
+@app.get("/overview", response_class=HTMLResponse)
+async def overview(request: Request):
+    return templates.TemplateResponse("overview.html", {"request": request})
 
 @app.get("/budgets")
 def get_budget():

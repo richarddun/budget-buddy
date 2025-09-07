@@ -1,0 +1,87 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Budget Buddy — Overview</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <style>
+      :root {
+        --bg: #0f172a; /* slate-900 */
+        --panel: #111827; /* gray-900 */
+        --card: #1f2937; /* gray-800 */
+        --text: #e5e7eb; /* gray-200 */
+        --muted: #9ca3af; /* gray-400 */
+        --accent: #60a5fa; /* blue-400 */
+      }
+      body { margin: 0; font-family: system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, 'Helvetica Neue', Arial, 'Noto Sans', 'Apple Color Emoji', 'Segoe UI Emoji'; background: var(--bg); color: var(--text); }
+      .container { max-width: 1100px; margin: 0 auto; padding: 20px; }
+      .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
+      .back { display: inline-block; padding: 8px 12px; background: var(--accent); color: #06142b; border-radius: 6px; text-decoration: none; font-weight: 600; }
+      .cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+      @media (max-width: 800px) { .cards { grid-template-columns: 1fr; } }
+      .card { background: var(--card); border-radius: 10px; padding: 16px; box-shadow: 0 2px 6px rgba(0,0,0,0.3); }
+      .label { font-size: 13px; color: var(--muted); margin-bottom: 6px; }
+      .value { font-size: 28px; font-weight: 700; letter-spacing: 0.3px; }
+      .muted { color: var(--muted); font-size: 12px; }
+      .row { display: flex; align-items: center; gap: 10px; }
+      .badge { display: inline-block; background: #374151; color: var(--muted); padding: 2px 8px; border-radius: 999px; font-size: 12px; }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <div class="header">
+        <h1 style="margin:0">Overview</h1>
+        <a class="back" href="{{ request.url_for('index') }}">← Back to Chat</a>
+      </div>
+      <div class="cards" role="region" aria-label="Overview header cards">
+        <div class="card" aria-labelledby="lbl-balance" aria-live="polite">
+          <div id="lbl-balance" class="label">Total Cleared Balance</div>
+          <div id="val-balance" class="value">—</div>
+          <div class="muted" id="meta-updated"></div>
+        </div>
+        <div class="card" aria-labelledby="lbl-safe" aria-live="polite">
+          <div id="lbl-safe" class="label">Safe To Spend Today</div>
+          <div id="val-safe" class="value">—</div>
+          <div class="muted">Buffer floor respected</div>
+        </div>
+        <div class="card" aria-labelledby="lbl-health" aria-live="polite">
+          <div id="lbl-health" class="label">Health</div>
+          <div class="row">
+            <div id="val-health" class="value" aria-label="Health band">—</div>
+            <div id="val-health-score" class="value" style="font-size:20px;color:var(--muted)">—</div>
+          </div>
+          <div class="muted">Based on buffer and cliff proximity</div>
+        </div>
+      </div>
+    </div>
+    <script>
+      function fmtCents(cents) {
+        const sign = cents < 0 ? '-' : '';
+        const abs = Math.abs(cents);
+        return sign + '$' + (abs/100).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2});
+      }
+      async function loadOverview() {
+        try {
+          const res = await fetch('{{ request.url_for("index") }}api/overview'.replace(/\/$/, ''));
+          if (!res.ok) throw new Error('Failed to load overview');
+          const d = await res.json();
+          document.getElementById('val-balance').textContent = fmtCents(d.current_balance_cents);
+          document.getElementById('val-safe').textContent = fmtCents(d.safe_to_spend_today_cents);
+          document.getElementById('val-health').textContent = d.health_band;
+          document.getElementById('val-health').setAttribute('aria-label', `Health band ${d.health_band}`);
+          document.getElementById('val-health-score').textContent = ` ${d.health_score}`;
+          const meta = d.snapshot?.created_at ? `Last snapshot: ${d.snapshot.created_at}${d.snapshot.is_stale ? ' · stale' : ''}` : 'No snapshot yet';
+          document.getElementById('meta-updated').innerHTML = `<span class="badge">${meta}</span>`;
+        } catch (e) {
+          document.getElementById('val-balance').textContent = 'N/A';
+          document.getElementById('val-safe').textContent = 'N/A';
+          document.getElementById('val-health').textContent = 'N/A';
+          document.getElementById('val-health-score').textContent = '';
+          document.getElementById('meta-updated').innerHTML = '<span class="badge">Unable to load overview</span>';
+        }
+      }
+      loadOverview();
+    </script>
+  </body>
+  </html>
+
