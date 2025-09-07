@@ -132,9 +132,11 @@ Use this checklist to track progress. Update the checkbox and add the commit has
 
 17. [17-api-simulate-spend.md](17-api-simulate-spend.md) — POST /api/forecast/simulate-spend.
     
-    Complete : [ ]
+    Complete : [X]
     
-    Related Commit : _____
+    Related Commit : 76873768ca7a311c1914d526be024405c32b0b37
+    
+    Summary: Added `POST /api/forecast/simulate-spend` accepting `{date, amount_cents, mode?, buffer_floor?, horizon_days?}`. Computes deterministic baseline over the horizon, evaluates safety against `buffer_floor`, and uses an integer binary search to return `max_safe_today_cents`. Responds with `safe/unsafe`, `new_min_balance_cents/date`, `tight_days` (near floor), and optional blended baseline reference. Included unit test for the binary search helper and an integration test for the endpoint.
 
 18. [18-ui-quick-can-i-spend-today.md](18-ui-quick-can-i-spend-today.md) — Quick “Can I spend X today?” UI.
     
