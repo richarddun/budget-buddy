@@ -12,6 +12,13 @@ import json
 
 from forecast.calendar import Entry, compute_balances, expand_calendar, _default_db_path
 from forecast.blended_stats import compute_daily_stats, compute_weekday_multipliers
+from config import (
+    MONTE_CARLO_ENABLED,
+    MONTE_CARLO_MAX_ITER,
+    MONTE_CARLO_DEFAULT_ITER,
+    MONTE_CARLO_DEFAULT_SEED,
+)
+import random
 
 
 router = APIRouter()
@@ -209,6 +216,117 @@ def _load_transactions_for_stats(db_path: Path, window_days: int = 180) -> list[
                 }
             )
     return rows
+
+
+@router.get("/api/forecast/monte-carlo")
+def get_forecast_monte_carlo(
+    start: str = Query(..., description="Start date YYYY-MM-DD"),
+    end: str = Query(..., description="End date YYYY-MM-DD"),
+    mu_daily: Optional[int] = Query(None, description="Mean daily variable spend in cents"),
+    sigma_daily: Optional[int] = Query(None, description="Std dev of daily variable spend in cents"),
+    weekday_mult: Optional[str] = Query(None, description="JSON array of 7 floats for weekday multipliers, Mon..Sun"),
+    iterations: Optional[int] = Query(None, description="Number of Monte Carlo iterations (<= max)"),
+    seed: Optional[int] = Query(None, description="RNG seed for reproducibility"),
+):
+    # Feature flag gate
+    if not MONTE_CARLO_ENABLED:
+        raise HTTPException(status_code=404, detail="Monte Carlo endpoint is disabled")
+
+    # Validate dates
+    try:
+        start_d = date.fromisoformat(start)
+        end_d = date.fromisoformat(end)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid date format; use YYYY-MM-DD")
+    if end_d < start_d:
+        raise HTTPException(status_code=400, detail="end must be on or after start")
+
+    dbp = _default_db_path()
+
+    # Deterministic baseline calendar balances for the horizon
+    opening_as_of = start_d - timedelta(days=1)
+    opening_balance = compute_opening_balance_cents(as_of=opening_as_of, db_path=dbp)
+    entries = expand_calendar(start_d, end_d, db_path=dbp)
+    balances_cal = compute_balances(opening_balance, entries)
+
+    # Parameters: parse or compute from stats
+    mults: List[float]
+    if weekday_mult:
+        try:
+            arr = json.loads(weekday_mult)
+            if not (isinstance(arr, list) and len(arr) == 7):
+                raise ValueError
+            mults = [float(x) for x in arr]
+        except Exception:
+            raise HTTPException(status_code=400, detail="weekday_mult must be a JSON array of 7 numbers")
+    else:
+        txns = _load_transactions_for_stats(dbp, window_days=180)
+        mults = compute_weekday_multipliers(txns, window_days=180)
+
+    if mu_daily is None or sigma_daily is None:
+        txns = _load_transactions_for_stats(dbp, window_days=180)
+        mu_c, sigma_c = compute_daily_stats(txns, window_days=180)
+        if mu_daily is None:
+            mu_daily = mu_c
+        if sigma_daily is None:
+            sigma_daily = sigma_c
+
+    # Iterations/seed
+    iters = int(iterations or MONTE_CARLO_DEFAULT_ITER)
+    iters = max(1, min(iters, int(MONTE_CARLO_MAX_ITER)))
+    rng = random.Random(int(seed) if seed is not None else MONTE_CARLO_DEFAULT_SEED)
+
+    # For each date, simulate variable spend draws and compute P10/P90 bands
+    # We use the same sparse date set as the deterministic balances for consistency with charts.
+    p10: dict[date, int] = {}
+    p90: dict[date, int] = {}
+
+    # Precompute per-date mean (modulated by weekday multiplier)
+    items = sorted(balances_cal.items(), key=lambda kv: kv[0])
+    for d, bal in items:
+        w = d.weekday()  # 0=Mon..6=Sun
+        mean = float(mu_daily or 0) * float(mults[w])
+        sigma = float(sigma_daily or 0)
+        draws: list[float] = []
+        for _ in range(iters):
+            x = rng.gauss(mean, sigma)
+            # Clamp to >= 0 (no negative spend magnitude)
+            if x < 0:
+                x = 0.0
+            draws.append(x)
+        # Compute percentiles on draws
+        draws.sort()
+        def _pct(data: List[float], q: float) -> float:
+            if not data:
+                return 0.0
+            # Simple nearest-rank interpolation
+            idx = max(0, min(len(data) - 1, int(round(q * (len(data) - 1)))))
+            return data[idx]
+
+        d10 = _pct(draws, 0.10)
+        d90 = _pct(draws, 0.90)
+        # Bands are baseline minus spend
+        lower = int(round(bal - d90))
+        upper = int(round(bal - d10))
+        p10[d] = lower
+        p90[d] = upper
+
+    resp = {
+        "baseline_calendar": {d.isoformat(): v for d, v in balances_cal.items()},
+        "bands": {
+            "p10": {d.isoformat(): v for d, v in p10.items()},
+            "p90": {d.isoformat(): v for d, v in p90.items()},
+        },
+        "params": {
+            "mu_daily_cents": int(mu_daily or 0),
+            "sigma_daily_cents": int(sigma_daily or 0),
+            "weekday_mult": mults,
+            "iterations": iters,
+            "seed": int(seed if seed is not None else MONTE_CARLO_DEFAULT_SEED),
+        },
+        "meta": {"horizon": {"start": start_d.isoformat(), "end": end_d.isoformat()}},
+    }
+    return resp
 
 
 @router.get("/api/forecast/blended")

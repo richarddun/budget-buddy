@@ -10,3 +10,11 @@ This module centralizes configuration instead of relying solely on env vars.
 # Example: BASE_PATH = "/budget-buddy"
 BASE_PATH = "/budget-buddy"
 
+# Feature flags
+# Optional Monte Carlo forecast endpoint; disabled by default.
+MONTE_CARLO_ENABLED = False
+
+# Monte Carlo defaults/limits when enabled
+MONTE_CARLO_MAX_ITER = 2000
+MONTE_CARLO_DEFAULT_ITER = 300
+MONTE_CARLO_DEFAULT_SEED = 1337
