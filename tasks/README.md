@@ -180,9 +180,11 @@ Use this checklist to track progress. Update the checkbox and add the commit has
 
 23. [23-ui-alert-feed-notifications.md](23-ui-alert-feed-notifications.md) — Alerts feed + optional notifications.
     
-    Complete : [ ]
+    Complete : [X]
     
-    Related Commit : _____
+    Related Commit : 5eec22f
+    
+    Summary: Implemented an accessible alerts feed in `templates/budget_health.html` rendering newest batch first with timestamps. Added 30s polling using overview/forecast digest, per‑session dismiss, and click→drilldown to the runway chart. Included opt‑in browser notifications with permission handling and deduping.
 
 24. [24-testing-suite-and-performance-budgets.md](24-testing-suite-and-performance-budgets.md) — Test suite + performance budgets.
     
