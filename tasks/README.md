@@ -44,9 +44,11 @@ Use this checklist to track progress. Update the checkbox and add the commit has
 
 6. [06-ingestion-csv-fallback.md](06-ingestion-csv-fallback.md) — CSV importer for YNAB exports.
    
-   Complete : [ ]
+   Complete : [X]
    
-   Related Commit : _____
+   Related Commit : a3dc7d113f20b4b44655c0a86c4d08550ce1dc63
+   
+   Summary: Added `ingest/csv_importer.py` to parse YNAB CSVs, normalize dates/amounts, build deterministic idempotency keys, resolve categories via `category_map` (source=`ynab-csv`) with Holding fallback, upsert accounts/transactions, and write `ingest_audit`. Wired into CLI (`budgetctl ingest ynab --from-csv PATH [--account NAME]`) and handler.
 
 7. [07-forecast-calendar-expansion.md](07-forecast-calendar-expansion.md) — Deterministic calendar expansion + balances.
    
