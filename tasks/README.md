@@ -116,9 +116,11 @@ Use this checklist to track progress. Update the checkbox and add the commit has
 
 15. [15-blended-compute-mu-sigma-weekday-mults.md](15-blended-compute-mu-sigma-weekday-mults.md) — Compute μ/σ and weekday multipliers.
     
-    Complete : [ ]
+    Complete : [X]
     
-    Related Commit : _____
+    Related Commit : 084b789
+    
+    Summary: Added `forecast/blended_stats.py` with `compute_daily_stats` (μ/σ in cents over contiguous daily series including zeros) and `compute_weekday_multipliers` (7 values normalized to average 1.0). Implemented robust filtering to exclude income, commitments, key events, and transfers via explicit flags and category hints. Added `tests/test_blended_stats.py` covering empty/sparse data, mean/stddev correctness, normalization, and exclusion behavior.
 
 16. [16-api-forecast-blended-and-ui-toggle.md](16-api-forecast-blended-and-ui-toggle.md) — Blended forecast API + UI toggle.
     
