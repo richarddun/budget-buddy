@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Optional, Dict, Any, List
 
 from fastapi import APIRouter, HTTPException, Query, Request
+from security.deps import require_auth, require_csrf, rate_limit
 
 from forecast.calendar import _default_db_path
 
@@ -22,15 +23,8 @@ def _connect(db_path: Path) -> sqlite3.Connection:
 
 
 def _require_csrf(request: Request) -> None:
-    """If CSRF_TOKEN env var is set, require matching X-CSRF-Token header.
-
-    If the env var is not set, do not enforce (useful for local/dev/tests).
-    """
-    token = os.getenv("CSRF_TOKEN")
-    if token:
-        header = request.headers.get("x-csrf-token") or request.headers.get("X-CSRF-Token")
-        if header != token:
-            raise HTTPException(status_code=403, detail="Invalid or missing CSRF token")
+    # Backwards compatibility; delegate to centralized deps
+    require_csrf(request)
 
 
 def _validate_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -143,7 +137,9 @@ def list_key_events(
 
 @router.post("/api/key-events")
 async def upsert_key_event(request: Request) -> Dict[str, Any]:
-    _require_csrf(request)
+    require_auth(request)
+    require_csrf(request)
+    rate_limit(request, scope="key-events-write")
     try:
         payload = await request.json()
     except Exception:
@@ -223,7 +219,9 @@ async def upsert_key_event(request: Request) -> Dict[str, Any]:
 
 @router.delete("/api/key-events/{event_id}")
 async def delete_key_event(event_id: int, request: Request) -> Dict[str, Any]:
-    _require_csrf(request)
+    require_auth(request)
+    require_csrf(request)
+    rate_limit(request, scope="key-events-write")
     dbp = _default_db_path()
     with _connect(dbp) as conn:
         cur = conn.execute("DELETE FROM key_spend_events WHERE id = ?", (event_id,))
@@ -231,4 +229,3 @@ async def delete_key_event(event_id: int, request: Request) -> Dict[str, Any]:
             raise HTTPException(status_code=404, detail="Key event not found")
         conn.commit()
         return {"status": "deleted", "id": event_id}
-

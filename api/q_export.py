@@ -10,7 +10,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
+from security.deps import require_auth, require_csrf, rate_limit
 
 from q.packs import assemble_pack
 
@@ -147,7 +148,11 @@ class ExportRequest:
 
 
 @router.post("/api/q/export")
-def export_pack(req: ExportRequest):  # type: ignore[valid-type]
+def export_pack(req: ExportRequest, request: Request):  # type: ignore[valid-type]
+    # Protect export generation behind admin auth when configured
+    require_auth(request)
+    require_csrf(request)
+    rate_limit(request, scope="q-export")
     # Validate format
     fmt = (req.format or "csv").strip().lower()
     if fmt not in ("csv", "pdf", "both"):
@@ -189,4 +194,3 @@ def export_pack(req: ExportRequest):  # type: ignore[valid-type]
         resp["pdf_url"] = f"/exports/{pdf_path.name}"
 
     return resp
-

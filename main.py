@@ -26,6 +26,8 @@ from jobs.backfill_payee_rules import backfill_from_ynab
 from forecast.calendar import Entry as FcEntry
 from datetime import date as _date
 from jobs.nightly_snapshot import _compute_digest as _compute_digest_from_snapshot
+from security.logging_filters import RedactSecretsFilter
+from security.deps import require_auth as _require_auth_dep, require_csrf as _require_csrf_dep, rate_limit as _rate_limit_dep
 
 def check_api_keys():
     """Return a warning message if API keys are missing."""
@@ -237,6 +239,13 @@ def compute_latest_digest():
 
 @app.on_event("startup")
 async def startup():
+    # Attach logging redaction filter to common loggers
+    try:
+        for name in ("uvicorn.error", "uvicorn.access", "asyncio", "__main__"):
+            lg = logging.getLogger(name)
+            lg.addFilter(RedactSecretsFilter())
+    except Exception:
+        pass
     # Run foundational DB migrations for local SoT schema
     try:
         applied = run_migrations(SOT_DB_PATH)
@@ -307,11 +316,16 @@ def get_budget():
 
 @app.post("/local/backfill-payee-rules")
 async def backfill_payee_rules_endpoint(
+    request: Request,
     months: int = 12,
     min_occurrences: int = 2,
     generalize: bool = True,
     dry_run: bool = False,
 ):
+    # Admin-protect and rate-limit this local/admin endpoint
+    _require_auth_dep(request)
+    _require_csrf_dep(request)
+    _rate_limit_dep(request, scope="admin-local-backfill")
     if not BUDGET_ID:
         return {"error": "YNAB_BUDGET_ID not configured"}
     try:
