@@ -159,6 +159,12 @@ The app uses this value as FastAPI's `root_path`, and all links are generated wi
 
 ---
 
+## 🧭 Operations Runbooks
+
+See `docs/runbooks.md` for admin runbooks covering ingestion (backfill/delta/CSV), category sync and mapping behavior, basic reconcile steps, and questionnaire exports with hash verification.
+
+---
+
 ## 🙌 Acknowledgments
 
 Created by Richard for household use. Powered by open tools, collaborative AI design, and a vision for intelligent family infrastructure.
