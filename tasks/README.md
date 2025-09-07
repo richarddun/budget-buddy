@@ -220,9 +220,11 @@ Use this checklist to track progress. Update the checkbox and add the commit has
 
 28. [28-nice-classifier-suggestions.md](28-nice-classifier-suggestions.md) — Classifier-assisted category suggestions.
     
-    Complete : [ ]
+    Complete : [X]
     
-    Related Commit : _____
+    Related Commit : bdbad93615864586582afa1328abf029b13fcfc4
+    
+    Summary: Added `classification/suggester.py` with read-only suggestions using payee rules, CSV category names, and simple keyword heuristics. Exposed `/api/classify/unmapped` (list Holding-mapped transactions with suggestions), `/api/classify/suggest` (on-demand), and `/api/classify/accept` (persist mapping to `category_map` for `ynab-csv` or payee rule). Added a minimal UI at `/unmatched` to review and accept suggestions.
 
 29. [29-nice-calendar-export-ical.md](29-nice-calendar-export-ical.md) — iCal export of commitments/events.
     
