@@ -108,9 +108,11 @@ Use this checklist to track progress. Update the checkbox and add the commit has
 
 14. [14-forecast-markers-leadtime-key-events.md](14-forecast-markers-leadtime-key-events.md) — Markers + lead-time flags in forecast.
     
-    Complete : [ ]
+    Complete : [X]
     
-    Related Commit : _____
+    Related Commit : d71de31
+    
+    Summary: Enriched `GET /api/forecast/calendar` to include `ui_marker` for commitments (📄) and key events (🎂/🎄/🎯) and `is_within_lead_window` for key events (computed relative to horizon start). Updated `templates/budget_health.html` to render server-provided markers and filter upcoming key events by lead window. Added `tests/test_api_forecast_leadtime.py` covering lead-window boundary behavior.
 
 15. [15-blended-compute-mu-sigma-weekday-mults.md](15-blended-compute-mu-sigma-weekday-mults.md) — Compute μ/σ and weekday multipliers.
     
