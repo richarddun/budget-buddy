@@ -7,6 +7,7 @@ from typing import Optional, List
 
 import sqlite3
 from fastapi import APIRouter, HTTPException, Query
+from fastapi import Body
 import json
 
 from forecast.calendar import Entry, compute_balances, expand_calendar, _default_db_path
@@ -289,4 +290,151 @@ def get_forecast_blended(
         },
         "meta": {"horizon": {"start": start_d.isoformat(), "end": end_d.isoformat()}},
     }
+    return resp
+
+
+def _binary_search_max_spend(is_safe, lo: int, hi: int) -> int:
+    """Generic binary search on integer domain to find the max value in [lo, hi]
+    such that `is_safe(x)` is True. Assumes monotonic predicate (True then False).
+    """
+    best = lo
+    while lo <= hi:
+        mid = (lo + hi) // 2
+        if is_safe(mid):
+            best = mid
+            lo = mid + 1
+        else:
+            hi = mid - 1
+    return best
+
+
+@router.post("/api/forecast/simulate-spend")
+def post_forecast_simulate_spend(
+    payload: dict = Body(
+        ..., description="{date, amount_cents, mode?, buffer_floor?, horizon_days?, tight_threshold_cents?}"
+    ),
+):
+    """Simulate a hypothetical discretionary spend on a date and evaluate safety.
+
+    Input JSON:
+    - date: YYYY-MM-DD (required)
+    - amount_cents: int (required; positive spend)
+    - mode: 'deterministic' | 'blended' (optional; blended is reference-only)
+    - buffer_floor: int cents (optional; default 0)
+    - horizon_days: int (optional; default 120)
+    - tight_threshold_cents: int (optional; default 1000)
+    """
+    try:
+        spend_date = date.fromisoformat(str(payload.get("date")))
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid or missing 'date' (YYYY-MM-DD)")
+    try:
+        amount_cents = int(payload.get("amount_cents"))
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid or missing 'amount_cents' (int cents)")
+    if amount_cents < 0:
+        raise HTTPException(status_code=400, detail="amount_cents must be non-negative (spend)")
+
+    mode = str(payload.get("mode") or "deterministic").lower()
+    buffer_floor = int(payload.get("buffer_floor") or 0)
+    horizon_days = int(payload.get("horizon_days") or 120)
+    tight_thresh = int(payload.get("tight_threshold_cents") or 1000)
+
+    if horizon_days <= 0:
+        raise HTTPException(status_code=400, detail="horizon_days must be positive")
+
+    start_d = spend_date
+    end_d = spend_date + timedelta(days=horizon_days)
+
+    dbp = _default_db_path()
+    opening_as_of = start_d - timedelta(days=1)
+    opening_balance = compute_opening_balance_cents(as_of=opening_as_of, db_path=dbp)
+    entries = expand_calendar(start_d, end_d, db_path=dbp)
+
+    # Deterministic baseline balances and min
+    balances_base = compute_balances(opening_balance, entries)
+    # Sorted for deterministic min selection
+    items = sorted(balances_base.items(), key=lambda kv: kv[0])
+    if items:
+        min_bal = items[0][1]
+        min_date = items[0][0]
+        for d, bal in items:
+            if bal < min_bal:
+                min_bal = bal
+                min_date = d
+    else:
+        min_bal = opening_balance
+        min_date = start_d
+
+    # Safety predicate is monotonic in spend amount: new_min = min_bal - x
+    def is_safe(x: int) -> bool:
+        return (min_bal - int(x)) >= buffer_floor
+
+    # Upper bound: at most the current margin to buffer floor
+    upper = max(0, min_bal - buffer_floor)
+    max_safe = _binary_search_max_spend(is_safe, 0, upper)
+
+    # Evaluate provided amount
+    new_min = min_bal - amount_cents
+    # The min date remains the same (all subsequent balances are shifted uniformly)
+    new_min_date = min_date
+
+    # Compute tight days after applying spend
+    # Shift all balances by -amount_cents from spend_date onward only on dates we have entries
+    tight_days: list[dict] = []
+    for d, bal in items:
+        adj = bal - amount_cents
+        if adj <= buffer_floor + tight_thresh:
+            tight_days.append({"date": d.isoformat(), "balance_cents": adj})
+    # Limit to a reasonable size
+    tight_days = sorted(tight_days, key=lambda x: x["date"])[:50]
+
+    # Optional reference blended baseline (does not affect decision)
+    blended_ref = None
+    if mode.startswith("blended"):
+        try:
+            txns = _load_transactions_for_stats(dbp, window_days=180)
+            mults = compute_weekday_multipliers(txns, window_days=180)
+            mu_c, sigma_c = compute_daily_stats(txns, window_days=180)
+            blended: dict[str, int] = {}
+            for d, bal in items:
+                w = d.weekday()
+                expected = int(round(mu_c * float(mults[w])))
+                blended[d.isoformat()] = bal - expected
+            blended_ref = {
+                "baseline_blended": blended,
+                "params": {
+                    "mu_daily_cents": int(mu_c),
+                    "sigma_daily_cents": int(sigma_c),
+                    "weekday_mult": mults,
+                },
+            }
+        except Exception:
+            blended_ref = None
+
+    resp = {
+        "input": {
+            "date": spend_date.isoformat(),
+            "amount_cents": amount_cents,
+            "mode": mode,
+            "buffer_floor": buffer_floor,
+            "horizon": {"start": start_d.isoformat(), "end": end_d.isoformat()},
+        },
+        "decision": {
+            "safe": bool(amount_cents <= max_safe),
+            "max_safe_today_cents": int(max_safe),
+            "new_min_balance_cents": int(new_min),
+            "new_min_balance_date": new_min_date.isoformat() if new_min_date else None,
+            "tight_days": tight_days,
+            "notes": "Decision compares new_min_balance against buffer_floor; max_safe found via integer binary search.",
+        },
+        "meta": {
+            "opening_balance_cents": opening_balance,
+            "baseline_min_balance_cents": int(min_bal),
+            "baseline_min_balance_date": min_date.isoformat() if min_date else None,
+            "db_path": str(dbp),
+        },
+    }
+    if blended_ref is not None:
+        resp["reference_blended"] = blended_ref
     return resp
