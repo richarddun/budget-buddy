@@ -124,9 +124,11 @@ Use this checklist to track progress. Update the checkbox and add the commit has
 
 16. [16-api-forecast-blended-and-ui-toggle.md](16-api-forecast-blended-and-ui-toggle.md) — Blended forecast API + UI toggle.
     
-    Complete : [ ]
+    Complete : [X]
     
-    Related Commit : _____
+    Related Commit : 3f39300
+    
+    Summary: Added `GET /api/forecast/blended` that derives the deterministic calendar baseline, subtracts expected variable spend `μ_daily * weekday_mult[weekday]`, and returns `baseline_blended` with `bands` (`lower/upper = baseline_blended ± k*σ_daily`). Falls back to computing μ/σ and weekday multipliers from recent transactions when params are not provided. Updated `templates/budget_health.html` with a Deterministic/Blended toggle and shaded band rendering. Added `tests/test_api_forecast_blended.py` covering fixed-parameter curves.
 
 17. [17-api-simulate-spend.md](17-api-simulate-spend.md) — POST /api/forecast/simulate-spend.
     
