@@ -228,6 +228,8 @@ Use this checklist to track progress. Update the checkbox and add the commit has
 
 29. [29-nice-calendar-export-ical.md](29-nice-calendar-export-ical.md) — iCal export of commitments/events.
     
-    Complete : [ ]
+    Complete : [X]
     
-    Related Commit : _____
+    Related Commit : 213a48fe35efadc20f5b3072c075c9aea0e40ca1
+    
+    Summary: Added `api/calendar_export.py` with `GET /api/calendar/ical?from=YYYY-MM-DD&to=YYYY-MM-DD` streaming an .ics file of commitments and key events (all‑day VEVENTs). Includes amount and shift policy/applied flags in DESCRIPTION. Wired router into `main.py`.
