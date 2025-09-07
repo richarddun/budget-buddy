@@ -196,9 +196,11 @@ Use this checklist to track progress. Update the checkbox and add the commit has
 
 25. [25-security-review-hardening.md](25-security-review-hardening.md) — Auth, CSRF, rate limits, privacy.
     
-    Complete : [ ]
+    Complete : [X]
     
-    Related Commit : _____
+    Related Commit : 85f0fba
+    
+    Summary: Added `security/deps.py` with `require_auth` (env `ADMIN_TOKEN`), `require_csrf` (env `CSRF_TOKEN`), and per‑IP fixed‑window `rate_limit`. Enforced auth+CSRF on write/admin endpoints (`/api/key-events` POST/DELETE, `/api/q/export`, `/local/backfill-payee-rules`) and added in‑memory rate limits. Introduced `security/logging_filters.py` to redact secrets from logs. Confirmed exports redact PII/memos by default; added tests in `tests/test_security.py` covering auth, CSRF, and rate limiting.
 
 26. [26-docs-admin-runbooks.md](26-docs-admin-runbooks.md) — Admin runbooks for ops.
     
