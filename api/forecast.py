@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Optional
 
@@ -18,6 +18,42 @@ def _connect(db_path: Path) -> sqlite3.Connection:
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     return conn
+
+
+def _tz_name() -> str:
+    import os
+
+    return os.getenv("SCHED_TZ") or os.getenv("TZ") or "UTC"
+
+
+def _today_tz() -> date:
+    try:
+        from zoneinfo import ZoneInfo  # type: ignore
+
+        tz = ZoneInfo(_tz_name())
+        return datetime.now(tz).date()
+    except Exception:
+        return datetime.utcnow().date()
+
+
+def _load_key_event_lead_times(conn: sqlite3.Connection) -> dict[int, Optional[int]]:
+    lead: dict[int, Optional[int]] = {}
+    for row in conn.execute("SELECT id, lead_time_days FROM key_spend_events"):
+        lead[int(row["id"])] = int(row["lead_time_days"]) if row["lead_time_days"] is not None else None
+    return lead
+
+
+def _ui_marker(entry: Entry) -> Optional[str]:
+    if entry.type == "commitment":
+        return "📄"
+    if entry.type == "key_event":
+        n = entry.name.lower()
+        if "birthday" in n or "bday" in n:
+            return "🎂"
+        if "christmas" in n or "xmas" in n or "holiday" in n:
+            return "🎄"
+        return "🎯"
+    return None
 
 
 def compute_opening_balance_cents(as_of: Optional[date] = None, *, db_path: Optional[Path] = None) -> int:
@@ -89,9 +125,24 @@ def get_forecast_calendar(
                 min_balance_cents = bal
                 min_balance_date = d
 
-    resp = {
-        "opening_balance_cents": opening_balance,
-        "entries": [
+    # Enrich entries with UI marker and key-event lead-window flag.
+    # For deterministic behavior in UI/tests, treat `today` as the start of the requested horizon.
+    today = start_d
+    lead_map: dict[int, Optional[int]] = {}
+    with _connect(dbp) as conn:
+        try:
+            lead_map = _load_key_event_lead_times(conn)
+        except Exception:
+            lead_map = {}
+
+    enriched = []
+    for e in entries:
+        lead_days = lead_map.get(e.source_id) if e.type == "key_event" else None
+        is_within = None
+        if e.type == "key_event" and lead_days is not None:
+            days_until = (e.date - today).days
+            is_within = 0 <= days_until <= int(lead_days)
+        enriched.append(
             {
                 "date": e.date.isoformat(),
                 "type": e.type,
@@ -100,9 +151,14 @@ def get_forecast_calendar(
                 "source_id": e.source_id,
                 "shift_applied": e.shift_applied,
                 "policy": e.policy,
+                "ui_marker": _ui_marker(e),
+                "is_within_lead_window": is_within,
             }
-            for e in entries
-        ],
+        )
+
+    resp = {
+        "opening_balance_cents": opening_balance,
+        "entries": enriched,
         "balances": {d.isoformat(): bal for d, bal in balances.items()},
         "min_balance_cents": min_balance_cents,
         "min_balance_date": min_balance_date.isoformat() if min_balance_date else None,
@@ -111,7 +167,7 @@ def get_forecast_calendar(
             "buffer_floor": buffer_floor,
             "below_buffer": (min_balance_cents is not None and buffer_floor is not None and min_balance_cents < buffer_floor),
             "db_path": str(dbp),
+            "today": today.isoformat(),
         },
     }
     return resp
-

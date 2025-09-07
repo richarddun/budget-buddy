@@ -372,7 +372,7 @@
             .map(e => ({
               x: new Date(e.date).getTime(),
               y: (fc.balances || {})[e.date] ?? fc.opening_balance_cents,
-              emoji: e.type === 'commitment' ? '📄' : '🎂',
+              emoji: e.ui_marker || (e.type === 'commitment' ? '📄' : '🎂'),
               title: `${e.type === 'commitment' ? 'Commitment' : 'Key event'} • ${e.name} • ${e.date} • ${fmtCents(e.amount_cents)}`,
               aria: `${e.type === 'commitment' ? 'Commitment' : 'Key event'} ${e.name} on ${e.date}, amount ${fmtCents(e.amount_cents)}`,
               type: e.type,
@@ -383,15 +383,14 @@
 
           drawRunway(document.getElementById('runway-canvas'), series, buffer, markers);
 
-          // Upcoming list: commitments within 14 days and key events within 30 days
+          // Upcoming list: commitments within 14 days; key events within lead window
           const today = new Date(); today.setHours(0,0,0,0);
           const d14 = new Date(today.getTime() + 14*86400000);
-          const d30 = new Date(today.getTime() + 30*86400000);
           const upcoming = entries.filter(e => {
             const dt = new Date(e.date);
             if (dt < today) return false;
             if (e.type === 'commitment') return dt <= d14;
-            if (e.type === 'key_event') return dt <= d30;
+            if (e.type === 'key_event') return e.is_within_lead_window === true;
             return false;
           }).map(e => ({...e}));
           // Sort: date asc, then amount abs desc, then name
@@ -401,7 +400,7 @@
           upcoming.slice(0, 12).forEach(e => {
             const li = document.createElement('li'); li.className = 'item';
             const left = document.createElement('div');
-            left.textContent = `${e.type === 'commitment' ? '📄' : '🎂'} ${e.name}`;
+            left.textContent = `${e.ui_marker || (e.type === 'commitment' ? '📄' : '🎂')} ${e.name}`;
             const right = document.createElement('div');
             const pill = document.createElement('span');
             const days = Math.round((new Date(e.date) - today)/86400000);
