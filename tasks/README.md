@@ -76,9 +76,11 @@ Use this checklist to track progress. Update the checkbox and add the commit has
 
 10. [10-ui-overview-header-cards.md](10-ui-overview-header-cards.md) — Overview header cards (balance, safe-to-spend, health).
     
-    Complete : [ ]
+    Complete : [X]
     
-    Related Commit : _____
+    Related Commit : 59c599c
+    
+    Summary: Added `api/overview.py` with `GET /api/overview` returning current balance, safe‑to‑spend today, heuristic health score/band, buffer floor, and latest snapshot metadata. Created `templates/overview.html` to render three header cards with accessible labels and responsive layout, and wired `/overview` route in `main.py` including the new API router.
 
 11. [11-ui-runway-chart-upcoming-alerts.md](11-ui-runway-chart-upcoming-alerts.md) — Runway chart, upcoming list, alerts panel.
     
