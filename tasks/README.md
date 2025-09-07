@@ -4,9 +4,11 @@ Use this checklist to track progress. Update the checkbox and add the commit has
 
 1. [01-foundations-db-migrations.md](01-foundations-db-migrations.md) — Initialize core schema and migrations.
    
-   Complete : [ ]
+   Complete : [X]
    
-   Related Commit : _____
+   Related Commit : e819f5b18e3bc6b53b573968efd2a9a8d5cdbee3
+   
+   Summary: Added db/migrations/0001_init.sql and migration runner (main.py)
 
 2. [02-foundations-cli-skeleton-budgetctl.md](02-foundations-cli-skeleton-budgetctl.md) — Add `budgetctl` CLI with ingest/admin stubs.
    
@@ -175,4 +177,3 @@ Use this checklist to track progress. Update the checkbox and add the commit has
     Complete : [ ]
     
     Related Commit : _____
-
