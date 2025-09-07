@@ -4,6 +4,7 @@ import sqlite3
 from pathlib import Path
 
 from db.migrate import run_migrations
+from categories.sync_ynab import run_sync as run_categories_sync
 
 
 def _connect(db_path: Path) -> sqlite3.Connection:
@@ -14,14 +15,23 @@ def _connect(db_path: Path) -> sqlite3.Connection:
 
 
 def sync_categories(db_path: Path) -> int:
-    with _connect(db_path) as conn:
-        # Touch the categories table to prove DB connectivity
-        conn.execute(
-            "CREATE TABLE IF NOT EXISTS categories (id INTEGER PRIMARY KEY, name TEXT NOT NULL)"
+    try:
+        # Ensure schema is applied
+        run_migrations(db_path)
+        print("[categories] Syncing categories from YNAB…")
+        result = run_categories_sync(db_path)
+        print(
+            "[success] Groups: {g}, Categories: {c}, Upserts: {u}, Maps touched: {m}".format(
+                g=result.ynab_groups_seen,
+                c=result.ynab_categories_seen,
+                u=result.categories_upserted,
+                m=result.maps_created,
+            )
         )
-    print("[categories] Sync from YNAB (skeleton)…")
-    print("[noop] Categories snapshot not implemented in skeleton.")
-    return 0
+        return 0
+    except Exception as e:
+        print(f"[error] Category sync failed: {e}")
+        return 1
 
 
 def reconcile(db_path: Path) -> int:
@@ -45,4 +55,3 @@ def db_migrate(db_path: Path) -> int:
     else:
         print("No pending migrations.")
     return 0
-
