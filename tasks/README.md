@@ -172,9 +172,11 @@ Use this checklist to track progress. Update the checkbox and add the commit has
 
 22. [22-alerts-event-triggers.md](22-alerts-event-triggers.md) — Alert triggers for thresholds/drift/large debits.
     
-    Complete : [ ]
+    Complete : [X]
     
-    Related Commit : _____
+    Related Commit : 8c241ce
+    
+    Summary: Added `alerts/engine.py` with checks for projected buffer threshold breaches (diff vs. previous snapshot), large recent debits (config `LARGE_DEBIT_CENTS`), and naive commitment amount drift over the last 3 months by category. Introduced migration `db/migrations/0002_alerts.sql` with dedupe index `(type, dedupe_key)`. Wired execution after daily ingestion and after nightly snapshot; both paths dedupe. Added `tests/test_alerts_engine.py` covering threshold crossing, large debit detection, and commitment amount drift.
 
 23. [23-ui-alert-feed-notifications.md](23-ui-alert-feed-notifications.md) — Alerts feed + optional notifications.
     
