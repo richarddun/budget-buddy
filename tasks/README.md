@@ -84,9 +84,11 @@ Use this checklist to track progress. Update the checkbox and add the commit has
 
 11. [11-ui-runway-chart-upcoming-alerts.md](11-ui-runway-chart-upcoming-alerts.md) — Runway chart, upcoming list, alerts panel.
     
-    Complete : [ ]
+    Complete : [X]
     
-    Related Commit : _____
+    Related Commit : 9752d55
+    
+    Summary: Enhanced `templates/budget_health.html` to render a responsive runway chart from `/api/forecast/calendar` with accessible emoji markers for commitments (📄) and key events (🎂), an Upcoming list (14–30 days) derived from forecast entries, and an Alerts panel determined from `/api/overview` health and buffer vs. projected balances. Includes ARIA labels, keyboard‑navigable markers, and mobile‑friendly layout.
 
 12. [12-chat-preload-daily-digest.md](12-chat-preload-daily-digest.md) — Preload daily digest in chat.
     
