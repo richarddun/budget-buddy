@@ -55,6 +55,12 @@ DB_PATH = Path("chat_history.db")
 # Local source-of-truth database (for tasks/migrations schema)
 SOT_DB_PATH = Path("localdb/budget.db")
 
+# Routers
+try:
+    from api.forecast import router as forecast_router
+except Exception:
+    forecast_router = None
+
 # --- File upload Setup ---
 UPLOAD_DIR = Path("uploaded_receipts")
 UPLOAD_DIR.mkdir(exist_ok=True)
@@ -132,6 +138,9 @@ async def startup():
     # Initialize chat history DB used by the app
     init_db()
     logger.info("[INIT] Budget Buddy (SSE) startup complete.")
+    # Include routers after app init
+    if forecast_router is not None:
+        app.include_router(forecast_router)
     # Optionally start the daily ingestion scheduler
     enable = os.getenv("ENABLE_DAILY_INGESTION", "false").lower() in ("1", "true", "yes", "on")
     leader = os.getenv("SCHEDULER_LEADER", "true").lower() in ("1", "true", "yes", "on")
