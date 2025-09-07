@@ -164,9 +164,11 @@ Use this checklist to track progress. Update the checkbox and add the commit has
 
 21. [21-questionnaire-exports-csv-pdf-hash.md](21-questionnaire-exports-csv-pdf-hash.md) — CSV/PDF exports with hash.
     
-    Complete : [ ]
+    Complete : [X]
     
-    Related Commit : _____
+    Related Commit : 118ad44
+    
+    Summary: Added `POST /api/q/export` producing CSV and simple PDF (HTML) files for assembled packs. Uses stable JSON serialization with `sha256(dataset|timestamp)` embedded in the footer. Includes PII/memo redaction toggles, mounts `/exports` static path, and adds tests for hash stability and file generation.
 
 22. [22-alerts-event-triggers.md](22-alerts-event-triggers.md) — Alert triggers for thresholds/drift/large debits.
     
