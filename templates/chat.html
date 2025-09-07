@@ -338,6 +338,38 @@
             <h1>💬 AI Budgeting Assistant Chat</h1>
 
             <div id="chatbox" class="chatbox">
+                {% if digest %}
+                <div class="system-digest" aria-live="polite">
+                    <div><strong>📬 Daily Digest</strong> <small>(generated {{ digest.generated_at }})</small></div>
+                    <div style="margin-top: 0.3em;">
+                        <div>Current balance: <strong>{{ digest.current_balance_cents | money }}</strong></div>
+                        <div>Safe to spend today: <strong>{{ digest.safe_to_spend_today_cents | money }}</strong></div>
+                        <div>Next cliff: <strong>{{ digest.balances.next_cliff_date or '—' }}</strong></div>
+                        <div>Min balance/date: <strong>{{ digest.balances.min_balance_cents | money }}</strong> on <strong>{{ digest.balances.min_balance_date or '—' }}</strong></div>
+                    </div>
+                    <div style="margin-top: 0.5em;">
+                        <div><em>Top commitments (next 14 days)</em></div>
+                        <ul style="margin-top: 0.2em;">
+                        {% for c in digest.top_commitments_next_14_days %}
+                            <li>{{ c.date }} — {{ c.name }}: <strong>{{ c.amount_cents | money }}</strong></li>
+                        {% else %}
+                            <li>None</li>
+                        {% endfor %}
+                        </ul>
+                    </div>
+                    <div style="margin-top: 0.5em;">
+                        <div><em>Upcoming key events (within lead window)</em></div>
+                        <ul style="margin-top: 0.2em;">
+                        {% for e in digest.upcoming_key_events %}
+                            <li>{{ e.date }} ({{ e.days_until }}d) — {{ e.name }}: <strong>{{ e.amount_cents | money }}</strong></li>
+                        {% else %}
+                            <li>None</li>
+                        {% endfor %}
+                        </ul>
+                    </div>
+                    <hr>
+                </div>
+                {% endif %}
                 {% include 'messages.html' %}
             </div>
 

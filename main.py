@@ -23,6 +23,9 @@ load_dotenv()
 from config import BASE_PATH
 from jobs.daily_ingestion import scheduler_loop
 from jobs.backfill_payee_rules import backfill_from_ynab
+from forecast.calendar import Entry as FcEntry
+from datetime import date as _date
+from jobs.nightly_snapshot import _compute_digest as _compute_digest_from_snapshot
 
 def check_api_keys():
     """Return a warning message if API keys are missing."""
@@ -47,6 +50,16 @@ from budget_health_analyzer import BudgetHealthAnalyzer
 
 # --- Template Setup ---
 templates = Jinja2Templates(directory="templates")
+# Simple currency formatter for templates
+def _money(cents: int | None) -> str:
+    try:
+        if cents is None:
+            return "—"
+        return f"$ {cents/100:,.2f}"
+    except Exception:
+        return str(cents)
+
+templates.env.filters["money"] = _money
 # Use a global configuration for base path (see config.py)
 app = FastAPI(root_path=BASE_PATH)
 app.mount("/static", StaticFiles(directory="static"), name="static")
@@ -127,6 +140,84 @@ def load_recent_messages(limit=10):
     conn.close()
     return messages
 
+# --- Digest preload helpers ---
+def _connect_localdb() -> sqlite3.Connection:
+    SOT_DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(SOT_DB_PATH)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+def load_latest_snapshot_row():
+    try:
+        with _connect_localdb() as conn:
+            cur = conn.execute(
+                """
+                SELECT created_at, json_payload
+                FROM forecast_snapshot
+                ORDER BY created_at DESC
+                LIMIT 1
+                """
+            )
+            row = cur.fetchone()
+            if not row:
+                return None
+            return {"created_at": row["created_at"], "json_payload": row["json_payload"]}
+    except Exception as e:
+        logger.exception(f"[DIGEST] Failed loading latest snapshot: {e}")
+        return None
+
+def compute_latest_digest():
+    """Compute digest from most recent snapshot payload. Returns dict or None."""
+    snap = load_latest_snapshot_row()
+    if not snap:
+        return None
+    try:
+        payload = json.loads(snap["json_payload"]) if isinstance(snap["json_payload"], str) else snap["json_payload"]
+        # Rehydrate entries
+        entries: list[FcEntry] = []
+        for e in payload.get("entries", []):
+            try:
+                entries.append(
+                    FcEntry(
+                        date=_date.fromisoformat(e.get("date")),
+                        type=e.get("type"),
+                        name=e.get("name"),
+                        amount_cents=int(e.get("amount_cents", 0)),
+                        source_id=int(e.get("source_id", 0)),
+                        shift_applied=bool(e.get("shift_applied", False)),
+                        policy=e.get("policy"),
+                    )
+                )
+            except Exception:
+                continue
+        # Rehydrate balances
+        balances: dict[_date, int] = {}
+        for k, v in (payload.get("balances", {}) or {}).items():
+            try:
+                balances[_date.fromisoformat(k)] = int(v)
+            except Exception:
+                continue
+        meta = payload.get("meta", {})
+        horizon = meta.get("horizon", {})
+        start_iso = horizon.get("start")
+        end_iso = horizon.get("end")
+        start = _date.fromisoformat(start_iso) if start_iso else _date.today()
+        end = _date.fromisoformat(end_iso) if end_iso else start
+        opening = int(payload.get("opening_balance_cents", 0))
+        digest = _compute_digest_from_snapshot(
+            today=_date.today(),
+            start=start,
+            end=end,
+            opening_balance_cents=opening,
+            entries=entries,
+            balances=balances,
+            db_path=SOT_DB_PATH,
+        )
+        return digest
+    except Exception as e:
+        logger.exception(f"[DIGEST] Failed computing digest from snapshot: {e}")
+        return None
+
 @app.on_event("startup")
 async def startup():
     # Run foundational DB migrations for local SoT schema
@@ -176,7 +267,11 @@ async def shutdown():
 @app.get("/", response_class=HTMLResponse)
 async def index(request: Request):
     chat_history = load_recent_messages()
-    return templates.TemplateResponse("chat.html", {"request": request, "chat_history": chat_history})
+    digest = compute_latest_digest()
+    return templates.TemplateResponse(
+        "chat.html",
+        {"request": request, "chat_history": chat_history, "digest": digest},
+    )
 
 @app.get("/overview", response_class=HTMLResponse)
 async def overview(request: Request):
