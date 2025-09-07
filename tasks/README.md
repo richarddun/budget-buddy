@@ -68,9 +68,11 @@ Use this checklist to track progress. Update the checkbox and add the commit has
 
 9. [09-job-nightly-forecast-snapshot.md](09-job-nightly-forecast-snapshot.md) — Nightly snapshot + digest job.
    
-   Complete : [ ]
+   Complete : [X]
    
-   Related Commit : _____
+   Related Commit : 0f604c1
+   
+   Summary: Added `jobs/nightly_snapshot.py` with `run_nightly_snapshot` to compute a 120‑day calendar forecast using the same opening balance strategy as the API, persist a row in `forecast_snapshot` (payload + min balance/date), and return a digest including current balance, safe‑to‑spend today, next cliff date, min balance/date, top commitments (14 days), and upcoming key events within lead windows. Wired to run after daily ingestion in `jobs/daily_ingestion.py`. Added `tests/test_nightly_snapshot.py` integration test to seed DB, run job, and assert snapshot/digest.
 
 10. [10-ui-overview-header-cards.md](10-ui-overview-header-cards.md) — Overview header cards (balance, safe-to-spend, health).
     
