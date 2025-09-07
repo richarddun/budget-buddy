@@ -59,10 +59,12 @@ Use this checklist to track progress. Update the checkbox and add the commit has
    Summary: Added `forecast/calendar.py` with `Entry` dataclass, `expand_calendar(start, end)` that expands scheduled inflows, commitments, and key events from the DB with deterministic ordering and business-day shift policies (AS_SCHEDULED, PREV_BUSINESS_DAY, NEXT_BUSINESS_DAY). Commitments respect `flexible_window_days` when shifting earlier. Implemented `compute_balances(opening_balance_cents, entries)` to produce date→balance mapping. Added `tests/test_forecast_calendar.py` covering shift behavior and the balance equation.
 
 8. [08-api-forecast-calendar-endpoint.md](08-api-forecast-calendar-endpoint.md) — GET /api/forecast/calendar.
+  
+   Complete : [X]
    
-   Complete : [ ]
+   Related Commit : aabda27
    
-   Related Commit : _____
+   Summary: Added `api/forecast.py` with FastAPI route `GET /api/forecast/calendar` that validates `start/end`, computes opening balance from cleared transactions across active accounts as of the day before `start`, expands entries via `forecast.calendar.expand_calendar`, computes balances and min balance/date, and returns deterministic JSON. Included router in `main.py`. Added `tests/test_api_forecast_calendar.py` seeding a temp DB and asserting opening balance, balances, and min balance/date.
 
 9. [09-job-nightly-forecast-snapshot.md](09-job-nightly-forecast-snapshot.md) — Nightly snapshot + digest job.
    
