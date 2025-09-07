@@ -1,45 +1,34 @@
 from __future__ import annotations
 
 import os
-import sqlite3
 from pathlib import Path
 
 from db.migrate import run_migrations
 from ingest.ynab_backfill import run_backfill
-
-
-def _connect(db_path: Path) -> sqlite3.Connection:
-    db_path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(db_path)
-    conn.execute("PRAGMA foreign_keys = ON;")
-    return conn
-
-
-def _read_source_cursor(conn: sqlite3.Connection, source: str) -> str | None:
-    cur = conn.execute("SELECT last_cursor FROM source_cursor WHERE source = ?", (source,))
-    row = cur.fetchone()
-    return row[0] if row and row[0] else None
+from ingest.ynab_delta import run_delta
 
 
 def delta_sync(db_path: Path) -> int:
-    """Stub delta sync for YNAB.
-
-    - Verifies required env vars exist (without printing secrets)
-    - Reads current cursor from DB to prove connectivity
-    - Prints actionable message and exits 0
-    """
+    """Run YNAB delta sync and report results."""
     ynab_token = os.getenv("YNAB_TOKEN")
     budget_id = os.getenv("YNAB_BUDGET_ID")
     if not ynab_token or not budget_id:
         print("YNAB credentials not configured (set YNAB_TOKEN and YNAB_BUDGET_ID).")
         return 2
 
-    with _connect(db_path) as conn:
-        cursor = _read_source_cursor(conn, source="ynab")
+    # Ensure schema is applied
+    run_migrations(db_path)
+
     print("[ingest:ynab:delta] Starting delta sync…")
-    print(f"[db] source_cursor.ynab last_cursor = {cursor!r}")
-    print("[noop] No records changed (skeleton mode).")
-    return 0
+    try:
+        result = run_delta(db_path)
+        print(
+            f"[success] Upserted {result.rows_upserted} rows. Mode=delta."
+        )
+        return 0 if result.status == "success" else 1
+    except Exception as e:
+        print(f"[error] Delta sync failed: {e}")
+        return 1
 
 
 def backfill(db_path: Path, months: int = 1) -> int:

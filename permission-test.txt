@@ -1,0 +1,2 @@
+This is a simple permissions test file.
+Created by Codex CLI assistant.
