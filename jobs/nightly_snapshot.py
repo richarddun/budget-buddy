@@ -16,6 +16,10 @@ from forecast.calendar import (
     _default_db_path,
 )
 from api.forecast import compute_opening_balance_cents
+try:
+    from alerts.engine import run_alert_checks  # type: ignore
+except Exception:  # pragma: no cover
+    run_alert_checks = None  # type: ignore
 
 logger = logging.getLogger("uvicorn.error")
 
@@ -243,6 +247,13 @@ def run_nightly_snapshot(horizon_days: int = 120, *, db_path: Optional[Path] = N
         db_path=dbp,
     )
 
+    # Run alert checks (thresholds etc.) after new snapshot is stored
+    try:
+        if run_alert_checks is not None:
+            run_alert_checks(db_path=dbp)
+    except Exception as e:  # pragma: no cover
+        logger.exception(f"Alert checks failed: {e}")
+
     logger.info(
         f"[SNAPSHOT] New forecast snapshot at {created_at} for {start.isoformat()}..{end.isoformat()}"
     )
@@ -252,4 +263,3 @@ def run_nightly_snapshot(horizon_days: int = 120, *, db_path: Optional[Path] = N
 async def run_nightly_snapshot_async(horizon_days: int = 120, *, db_path: Optional[Path] = None) -> Dict[str, Any]:
     # Thin async shim for scheduler compatibility
     return run_nightly_snapshot(horizon_days=horizon_days, db_path=db_path)
-

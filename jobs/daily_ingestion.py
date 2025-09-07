@@ -7,6 +7,10 @@ from zoneinfo import ZoneInfo
 from ynab_sdk_client import YNABSdkClient
 from localdb import payee_db
 from jobs.nightly_snapshot import run_nightly_snapshot_async
+try:
+    from alerts.engine import run_alert_checks  # type: ignore
+except Exception:  # pragma: no cover
+    run_alert_checks = None  # type: ignore
 
 # Optional: use the existing agent to let AI review/adjust
 try:
@@ -119,6 +123,13 @@ async def run_daily_ingestion() -> None:
 
     # Optional AI review pass (local-only suggestions/updates via tools)
     await _ai_review_transactions_if_enabled(txns_text)
+
+    # Run alert checks on new transactions (e.g., large debits)
+    try:
+        if run_alert_checks is not None:
+            run_alert_checks()
+    except Exception as e:  # pragma: no cover
+        logger.exception(f"Alert checks after ingestion failed: {e}")
 
 
 async def scheduler_loop(hour: int = 7, minute: int = 0) -> None:
