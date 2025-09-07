@@ -85,11 +85,20 @@ try:
     from api.q import router as q_router
 except Exception:
     q_router = None
+try:
+    from api.q_export import router as q_export_router
+except Exception:
+    q_export_router = None
 
 # --- File upload Setup ---
 UPLOAD_DIR = Path("uploaded_receipts")
 UPLOAD_DIR.mkdir(exist_ok=True)
 app.mount("/receipts", StaticFiles(directory=UPLOAD_DIR), name="receipts")
+
+# --- Exports Setup (for questionnaire exports) ---
+EXPORTS_DIR = Path("localdb/exports")
+EXPORTS_DIR.mkdir(parents=True, exist_ok=True)
+app.mount("/exports", StaticFiles(directory=EXPORTS_DIR), name="exports")
 
 def init_db():
     conn = sqlite3.connect(DB_PATH)
@@ -250,6 +259,8 @@ async def startup():
         app.include_router(key_events_router)
     if q_router is not None:
         app.include_router(q_router)
+    if q_export_router is not None:
+        app.include_router(q_export_router)
     # Optionally start the daily ingestion scheduler
     enable = os.getenv("ENABLE_DAILY_INGESTION", "false").lower() in ("1", "true", "yes", "on")
     leader = os.getenv("SCHEDULER_LEADER", "true").lower() in ("1", "true", "yes", "on")
