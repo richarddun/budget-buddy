@@ -204,9 +204,11 @@ Use this checklist to track progress. Update the checkbox and add the commit has
 
 26. [26-docs-admin-runbooks.md](26-docs-admin-runbooks.md) — Admin runbooks for ops.
     
-    Complete : [ ]
+    Complete : [X]
     
-    Related Commit : _____
+    Related Commit : 49cbb213fbb1f63b572da082ac031f62d840326a
+    
+    Summary: Added `docs/runbooks.md` covering ingestion (backfill, delta, CSV), YNAB category sync + mapping policy (prefers existing map → name match → Holding), basic reconcile workflow, and questionnaire exports with admin auth/CSRF and hash verification. Linked from root `README.md` under Operations Runbooks.
 
 27. [27-nice-monte-carlo-bands.md](27-nice-monte-carlo-bands.md) — Optional Monte Carlo bands (flagged).
     
