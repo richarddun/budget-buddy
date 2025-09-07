@@ -148,9 +148,11 @@ Use this checklist to track progress. Update the checkbox and add the commit has
 
 19. [19-questionnaire-query-endpoints.md](19-questionnaire-query-endpoints.md) — Deterministic questionnaire query endpoints.
     
-    Complete : [ ]
+    Complete : [X]
     
-    Related Commit : _____
+    Related Commit : 33a26e83e1aa5f4fcad1aa6a0200510e333a50a8
+    
+    Summary: Implemented `/api/q/*` endpoints with deterministic SQL queries and evidence IDs. Added `q/queries.py` (alias resolution, totals/averages, income, loans, subscriptions, category breakdown, supporting transactions with pagination, fixed costs), `api/q.py` router, wired into `main.py`, and added `tests/test_q_endpoints.py` covering core behaviors.
 
 20. [20-questionnaire-packs-assembly.md](20-questionnaire-packs-assembly.md) — Pack assembly (Loan Basics, Affordability).
     
