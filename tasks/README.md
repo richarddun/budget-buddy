@@ -212,9 +212,11 @@ Use this checklist to track progress. Update the checkbox and add the commit has
 
 27. [27-nice-monte-carlo-bands.md](27-nice-monte-carlo-bands.md) — Optional Monte Carlo bands (flagged).
     
-    Complete : [ ]
+    Complete : [X]
     
-    Related Commit : _____
+    Related Commit : cb56ba21d2c4cbbc0d8ec314876718200c9f99a2
+    
+    Summary: Added `GET /api/forecast/monte-carlo` returning P10/P90 bands over the deterministic calendar horizon. Behind `config.MONTE_CARLO_ENABLED` (404 when disabled). Supports optional `mu_daily`, `sigma_daily`, `weekday_mult`, `iterations` (capped), and `seed` with a default RNG seed for reproducibility. Kept separate from deterministic/blended baselines.
 
 28. [28-nice-classifier-suggestions.md](28-nice-classifier-suggestions.md) — Classifier-assisted category suggestions.
     
