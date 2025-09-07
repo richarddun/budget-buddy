@@ -20,9 +20,11 @@ Use this checklist to track progress. Update the checkbox and add the commit has
 
 3. [03-ingestion-backfill-ynab-idempotent.md](03-ingestion-backfill-ynab-idempotent.md) — Idempotent YNAB backfill with audit logging.
    
-   Complete : [ ]
+   Complete : [X]
    
-   Related Commit : _____
+   Related Commit : 587250801ecd6cad7a0b3eaf38d669493a4eb496
+   
+   Summary: Added `ingest/ynab_backfill.py` to perform idempotent backfill from YNAB. Builds `idempotency_key` as `source:ynab:{account_id}:{external_id}`, upserts accounts and transactions, maps categories via `category_map` when present, and writes `ingest_audit` with timing/rows/status. Wired into CLI via `budgetctl ingest ynab --backfill --months N`.
 
 4. [04-ingestion-delta-sync-ynab.md](04-ingestion-delta-sync-ynab.md) — Delta sync using cursor/knowledge.
    
