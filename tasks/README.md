@@ -100,9 +100,11 @@ Use this checklist to track progress. Update the checkbox and add the commit has
 
 13. [13-key-events-api-crud-and-ui-modal.md](13-key-events-api-crud-and-ui-modal.md) — Key spend events CRUD API + modal.
     
-    Complete : [ ]
+    Complete : [X]
     
-    Related Commit : _____
+    Related Commit : 223dc79
+    
+    Summary: Added `api/key_events.py` with routes: GET `/api/key-events?from&to`, POST `/api/key-events` (insert/update with validation and optional CSRF via `X-CSRF-Token`), and DELETE `/api/key-events/{id}`. Wired router in `main.py`. Implemented a minimal add/edit/delete modal in `templates/budget_health.html` that submits via fetch and refreshes the chart. Added `tests/test_api_key_events.py` covering CRUD and date filtering.
 
 14. [14-forecast-markers-leadtime-key-events.md](14-forecast-markers-leadtime-key-events.md) — Markers + lead-time flags in forecast.
     
