@@ -53,6 +53,19 @@
           <div class="muted">Based on buffer and cliff proximity</div>
         </div>
       </div>
+
+      <div class="card" style="margin-top:12px" aria-labelledby="lbl-quick-check">
+        <div id="lbl-quick-check" class="label">Quick check — Can I spend X today?</div>
+        <form id="spend-form" class="row" style="gap:8px" aria-describedby="spend-help">
+          <label for="spend-amount-cents" class="muted" style="min-width:120px">Amount (cents)</label>
+          <input id="spend-amount-cents" name="amount_cents" type="number" inputmode="numeric" pattern="[0-9]*" min="0" step="1" required
+                 placeholder="e.g. 2500" aria-required="true"
+                 style="flex:1; background:#0b1222; color:var(--text); border:1px solid #374151; border-radius:6px; padding:8px 10px" />
+          <button type="submit" style="background:#2563eb; color:white; border:none; border-radius:6px; padding:8px 12px; cursor:pointer">Check</button>
+        </form>
+        <div id="spend-help" class="muted" style="margin-top:6px">Enter an integer number of cents. Results respect your buffer floor.</div>
+        <div id="spend-result" aria-live="polite" style="margin-top:10px"></div>
+      </div>
     </div>
     <script>
       function fmtCents(cents) {
@@ -60,11 +73,13 @@
         const abs = Math.abs(cents);
         return sign + '$' + (abs/100).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2});
       }
+      let __overview = null;
       async function loadOverview() {
         try {
           const res = await fetch('{{ request.url_for("index") }}api/overview'.replace(/\/$/, ''));
           if (!res.ok) throw new Error('Failed to load overview');
           const d = await res.json();
+          __overview = d;
           document.getElementById('val-balance').textContent = fmtCents(d.current_balance_cents);
           document.getElementById('val-safe').textContent = fmtCents(d.safe_to_spend_today_cents);
           document.getElementById('val-health').textContent = d.health_band;
@@ -81,7 +96,54 @@
         }
       }
       loadOverview();
+
+      // Quick simulate-spend form
+      const spendForm = document.getElementById('spend-form');
+      const spendInput = document.getElementById('spend-amount-cents');
+      const spendResult = document.getElementById('spend-result');
+      function csrfHeader() {
+        const meta = document.querySelector('meta[name="csrf-token"]');
+        return meta ? { 'X-CSRF-Token': meta.getAttribute('content') } : {};
+      }
+      spendForm?.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const raw = (spendInput?.value || '').trim();
+        spendResult.textContent = '';
+        if (!raw) { spendResult.textContent = 'Please enter an amount in cents.'; return; }
+        if (!/^[0-9]+$/.test(raw)) { spendResult.textContent = 'Amount must be an integer number of cents.'; return; }
+        const amount = Number(raw);
+        if (!Number.isFinite(amount) || amount < 0) { spendResult.textContent = 'Amount must be a non-negative integer.'; return; }
+        const today = new Date(); today.setHours(0,0,0,0);
+        const payload = {
+          date: new Date(today.getTime() - today.getTimezoneOffset()*60000).toISOString().slice(0,10),
+          amount_cents: amount,
+          buffer_floor: (__overview && typeof __overview.buffer_floor_cents === 'number') ? __overview.buffer_floor_cents : 0,
+          mode: 'deterministic',
+          horizon_days: 120,
+        };
+        try {
+          const res = await fetch('{{ request.url_for("index") }}api/forecast/simulate-spend'.replace(/\/$/, ''), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', ...csrfHeader() },
+            body: JSON.stringify(payload),
+          });
+          if (!res.ok) {
+            const j = await res.json().catch(() => ({}));
+            throw new Error(j.detail || 'Request failed');
+          }
+          const out = await res.json();
+          const dec = out.decision || {};
+          const safe = !!dec.safe;
+          const msg = [
+            safe ? '✅ Safe' : '❌ Unsafe',
+            ` · Max safe today: ${fmtCents(dec.max_safe_today_cents ?? 0)}`,
+            dec.new_min_balance_date ? ` · Min on ${dec.new_min_balance_date}: ${fmtCents(dec.new_min_balance_cents ?? 0)}` : ''
+          ].join('');
+          spendResult.innerHTML = msg + (dec.notes ? `<div class="muted" style="margin-top:4px">${dec.notes}</div>` : '');
+        } catch (err) {
+          spendResult.textContent = String(err.message || err);
+        }
+      });
     </script>
   </body>
   </html>
-
