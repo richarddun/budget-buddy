@@ -12,9 +12,11 @@ Use this checklist to track progress. Update the checkbox and add the commit has
 
 2. [02-foundations-cli-skeleton-budgetctl.md](02-foundations-cli-skeleton-budgetctl.md) — Add `budgetctl` CLI with ingest/admin stubs.
    
-   Complete : [ ]
+   Complete : [X]
    
-   Related Commit : _____
+   Related Commit : 71f454b29b9ae92863ee2d58016310aa482b36c5
+   
+   Summary: Added `budgetctl` package with `python -m budgetctl` entrypoint. Implemented argparse-based subcommands for `ingest ynab` (delta/backfill/from-csv), `categories sync-ynab`, `reconcile`, and optional `db migrate`. Stubs print actionable messages and touch the SQLite DB (reads `source_cursor`).
 
 3. [03-ingestion-backfill-ynab-idempotent.md](03-ingestion-backfill-ynab-idempotent.md) — Idempotent YNAB backfill with audit logging.
    
