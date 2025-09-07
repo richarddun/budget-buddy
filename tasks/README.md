@@ -51,10 +51,12 @@ Use this checklist to track progress. Update the checkbox and add the commit has
    Summary: Added `ingest/csv_importer.py` to parse YNAB CSVs, normalize dates/amounts, build deterministic idempotency keys, resolve categories via `category_map` (source=`ynab-csv`) with Holding fallback, upsert accounts/transactions, and write `ingest_audit`. Wired into CLI (`budgetctl ingest ynab --from-csv PATH [--account NAME]`) and handler.
 
 7. [07-forecast-calendar-expansion.md](07-forecast-calendar-expansion.md) — Deterministic calendar expansion + balances.
+  
+   Complete : [X]
    
-   Complete : [ ]
+   Related Commit : 88d258e
    
-   Related Commit : _____
+   Summary: Added `forecast/calendar.py` with `Entry` dataclass, `expand_calendar(start, end)` that expands scheduled inflows, commitments, and key events from the DB with deterministic ordering and business-day shift policies (AS_SCHEDULED, PREV_BUSINESS_DAY, NEXT_BUSINESS_DAY). Commitments respect `flexible_window_days` when shifting earlier. Implemented `compute_balances(opening_balance_cents, entries)` to produce date→balance mapping. Added `tests/test_forecast_calendar.py` covering shift behavior and the balance equation.
 
 8. [08-api-forecast-calendar-endpoint.md](08-api-forecast-calendar-endpoint.md) — GET /api/forecast/calendar.
    
