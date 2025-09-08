@@ -106,7 +106,7 @@ class BudgetHealthAnalyzer:
 
         return BudgetHealthMetrics(
             total_budgeted=total_budgeted,
-            total_spent=abs(total_spent),  # Make spending positive for display
+            total_spent=total_spent,
             total_remaining=total_remaining,
             overspent_categories=overspent_categories,
             underfunded_goals=underfunded_goals,
@@ -203,19 +203,35 @@ class BudgetHealthAnalyzer:
         )
 
     def _calculate_budget_totals(self) -> Tuple[float, float, float]:
-        """Calculate total budgeted, spent, and remaining amounts"""
-        total_budgeted = 0
-        total_activity = 0
-        total_balance = 0
+        """Calculate total budgeted, spent, and remaining amounts.
+
+        Previously this method summed the category ``balance`` fields to
+        determine the remaining amount.  Category balances accumulate funds
+        across months, so using them dramatically inflated the remaining
+        value (e.g., by including long‑term savings).  The remaining amount
+        should instead reflect the current month's budget: what was budgeted
+        minus what was spent in the same period.
+
+        The corrected implementation sums the ``budgeted`` and ``activity``
+        values for the month and derives:
+        - ``total_spent`` as the absolute value of negative activity
+        - ``total_remaining`` as ``total_budgeted + total_activity``
+          (equivalently ``total_budgeted - total_spent``)
+        """
+
+        total_budgeted = 0.0
+        total_activity = 0.0
 
         if self._budget_data:
-            for category in self._budget_data.get('categories', []):
-                if not category.get('deleted', False) and not category.get('hidden', False):
-                    total_budgeted += category.get('budgeted', 0) or 0
-                    total_activity += category.get('activity', 0) or 0
-                    total_balance += category.get('balance', 0) or 0
+            for category in self._budget_data.get("categories", []):
+                if not category.get("deleted", False) and not category.get("hidden", False):
+                    total_budgeted += category.get("budgeted", 0) or 0
+                    total_activity += category.get("activity", 0) or 0
 
-        return total_budgeted, total_activity, total_balance
+        total_spent = -total_activity if total_activity < 0 else 0.0
+        total_remaining = total_budgeted + total_activity
+
+        return total_budgeted, total_spent, total_remaining
 
     def _find_overspent_categories(self) -> List[Dict[str, Any]]:
         """Find categories that are overspent (negative balance)"""
