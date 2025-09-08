@@ -27,15 +27,19 @@ class RedactSecretsFilter(logging.Filter):
 
     def filter(self, record: logging.LogRecord) -> bool:
         try:
-            msg = str(record.getMessage())
-            redacted = msg
+            # IMPORTANT: Using record.getMessage() formats msg % args.
+            # If we then mutate record.msg only and leave record.args intact,
+            # the logging framework will attempt to re-format and raise a TypeError.
+            # Strategy: redact on the fully formatted message and then clear args.
+            formatted = str(record.getMessage())
+            redacted = formatted
             for s in self._secrets:
                 if s:
                     redacted = redacted.replace(s, "***")
-            # Update the msg only (avoid mutating args unpredictably)
+            # Replace message with redacted text and clear args to avoid re-formatting
             record.msg = redacted
+            record.args = ()
         except Exception:
             # Best effort: never break logging
             pass
         return True
-
