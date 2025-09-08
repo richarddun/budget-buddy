@@ -132,6 +132,7 @@ uvicorn main:app --reload
 ```
 
 This is useful for containerized test environments where secrets are unavailable.
+
 When running in staging the app also seeds `localdb/budget.db` with dummy
 accounts and transactions so you can verify database writes without real YNAB
 data.
