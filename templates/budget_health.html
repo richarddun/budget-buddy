@@ -95,6 +95,7 @@
               <span><span class="swatch" style="background:#ef4444"></span>Below buffer</span>
               <span aria-label="Commitment marker">📄 Commitment</span>
               <span aria-label="Key event marker">🎂 Key event</span>
+              <span id="legend-history" style="display:none"><span class="swatch" style="background:#94a3b8"></span>History (60d)</span>
               <span id="legend-empty-note" class="badge" style="display:none">No scheduled items in this horizon. Showing flat baseline.</span>
               <span id="legend-meta" class="badge" aria-live="polite"></span>
             </div>
@@ -302,17 +303,21 @@
         return out;
       }
 
-      function drawRunway(canvas, series, threshold, markers, band) {
+      function drawRunway(canvas, series, threshold, markers, band, history) {
         const ctx = canvas.getContext('2d');
         const w = canvas.clientWidth, h = canvas.clientHeight;
         canvas.width = w * devicePixelRatio; canvas.height = h * devicePixelRatio;
         ctx.scale(devicePixelRatio, devicePixelRatio);
         ctx.clearRect(0,0,w,h);
 
-        if (series.length === 0) return;
+        if ((!series || series.length === 0) && (!history || history.length === 0)) return;
         // Compute min/max
-        let minY = Math.min(...series.map(p => p[1]));
-        let maxY = Math.max(...series.map(p => p[1]));
+        const allY = [
+          ...(series && series.length ? series.map(p => p[1]) : []),
+          ...(history && history.length ? history.map(p => p[1]) : []),
+        ];
+        let minY = Math.min(...allY);
+        let maxY = Math.max(...allY);
         if (threshold !== null && threshold !== undefined) {
           minY = Math.min(minY, threshold);
           maxY = Math.max(maxY, threshold);
@@ -322,7 +327,12 @@
         const padL = 44, padR = 10, padT = 16, padB = 34;
         const innerW = w - padL - padR;
         const innerH = h - padT - padB;
-        const x0 = series[0][0], x1 = series[series.length-1][0];
+        const firstX = (arr) => (arr && arr.length ? arr[0][0] : null);
+        const lastX = (arr) => (arr && arr.length ? arr[arr.length-1][0] : null);
+        const sx0 = firstX(series), sx1 = lastX(series);
+        const hx0 = firstX(history), hx1 = lastX(history);
+        const x0 = Math.min(...[sx0, hx0].filter(v => v !== null));
+        const x1 = Math.max(...[sx1, hx1].filter(v => v !== null));
         const xRange = x1 - x0 || 1;
         const yRange = maxY - minY || 1;
 
@@ -363,6 +373,30 @@
         ctx.strokeStyle = '#1f2937'; ctx.lineWidth = 1;
         ctx.beginPath(); ctx.moveTo(padL, padT); ctx.lineTo(padL, h - padB); ctx.stroke();
         ctx.beginPath(); ctx.moveTo(padL, h - padB); ctx.lineTo(w - padR, h - padB); ctx.stroke();
+
+        // Seam between history and forecast (vertical line at forecast start)
+        const seamX = (series && series.length) ? series[0][0] : null;
+        if (seamX !== null) {
+          const xx = xScale(seamX);
+          ctx.strokeStyle = '#9ca3af'; // muted
+          ctx.lineWidth = 1;
+          ctx.setLineDash([2,2]);
+          ctx.beginPath(); ctx.moveTo(xx, padT); ctx.lineTo(xx, h - padB); ctx.stroke();
+          ctx.setLineDash([]);
+        }
+
+        // Draw history series first (muted)
+        if (history && history.length > 1) {
+          ctx.strokeStyle = '#94a3b8'; // slate-400
+          ctx.lineWidth = 1.5; ctx.setLineDash([5,3]);
+          ctx.beginPath();
+          history.forEach((p, i) => { const x = xScale(p[0]), y = yScale(p[1]); if (i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y); });
+          ctx.stroke();
+          ctx.setLineDash([]);
+          const legH = document.getElementById('legend-history'); if (legH) legH.style.display = '';
+        } else {
+          const legH = document.getElementById('legend-history'); if (legH) legH.style.display = 'none';
+        }
 
         // Threshold line
         if (threshold !== null && threshold !== undefined) {
@@ -587,7 +621,28 @@
               amount_cents: e.amount_cents
             }));
 
-          drawRunway(document.getElementById('runway-canvas'), series, buffer, markers, band);
+          // Load last 60 days history to provide recent trend
+          let histSeries = [];
+          try {
+            if (start) {
+              const startDate = new Date(start);
+              const histEnd = new Date(startDate.getTime() - 1*86400000);
+              const histStart = new Date(startDate.getTime() - 60*86400000);
+              const iso = d => new Date(d.getTime()-d.getTimezoneOffset()*60000).toISOString().slice(0,10);
+              const urlH = new URL('{{ request.url_for("index") }}api/forecast/calendar'.replace(/\/$/, ''));
+              urlH.searchParams.set('start', iso(histStart));
+              urlH.searchParams.set('end', iso(histEnd));
+              urlH.searchParams.set('buffer_floor', String(buffer));
+              const resH = await fetch(urlH.toString());
+              if (resH.ok) {
+                const fh = await resH.json();
+                const hbal = Object.entries(fh.balances || {}).map(([d, b]) => [new Date(d).getTime(), b]).sort((a,b) => a[0]-b[0]);
+                histSeries = downsample(hbal);
+              }
+            }
+          } catch {}
+
+          drawRunway(document.getElementById('runway-canvas'), series, buffer, markers, band, histSeries);
 
           // Upcoming list: commitments within 14 days; key events within lead window
           const today = new Date(); today.setHours(0,0,0,0);
