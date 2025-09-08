@@ -18,6 +18,7 @@ from config import (
     MONTE_CARLO_DEFAULT_ITER,
     MONTE_CARLO_DEFAULT_SEED,
 )
+from config import SALARY_DOM, SALARY_MIN_CENTS
 import random
 
 
@@ -44,6 +45,114 @@ def _today_tz() -> date:
         return datetime.now(tz).date()
     except Exception:
         return datetime.utcnow().date()
+
+
+def _ledger_daily_deltas(conn: sqlite3.Connection, start: date, end: date) -> dict[date, int]:
+    """Return mapping of date -> sum(amount_cents) for cleared transactions on that date.
+
+    Joins accounts to ensure only active accounts are considered.
+    """
+    rows = conn.execute(
+        """
+        SELECT DATE(t.posted_at) AS d, COALESCE(SUM(t.amount_cents), 0) AS delta
+        FROM transactions t
+        JOIN accounts a ON a.id = t.account_id
+        WHERE a.is_active = 1
+          AND t.is_cleared = 1
+          AND DATE(t.posted_at) >= ? AND DATE(t.posted_at) <= ?
+        GROUP BY DATE(t.posted_at)
+        ORDER BY DATE(t.posted_at)
+        """,
+        (start.isoformat(), end.isoformat()),
+    ).fetchall()
+    out: dict[date, int] = {}
+    for r in rows:
+        try:
+            d = date.fromisoformat(str(r[0]))
+            out[d] = int(r[1] or 0)
+        except Exception:
+            continue
+    return out
+
+
+@router.get("/api/forecast/history")
+def get_forecast_history(
+    start: str = Query(..., description="Start date YYYY-MM-DD"),
+    end: str = Query(..., description="End date YYYY-MM-DD"),
+):
+    """Return ledger-based daily balances between start and end (inclusive).
+
+    Uses cleared transactions across active accounts. Opening balance is computed
+    as of the day before `start` and daily deltas are applied forward.
+    """
+    try:
+        start_d = date.fromisoformat(start)
+        end_d = date.fromisoformat(end)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid date format; use YYYY-MM-DD")
+    if end_d < start_d:
+        raise HTTPException(status_code=400, detail="end must be on or after start")
+
+    dbp = _default_db_path()
+    opening_as_of = start_d - timedelta(days=1)
+    opening = compute_opening_balance_cents(as_of=opening_as_of, db_path=dbp)
+
+    with _connect(dbp) as conn:
+        deltas = _ledger_daily_deltas(conn, start_d, end_d)
+
+    # Walk days and build balances
+    balances: dict[date, int] = {}
+    running = opening
+    d = start_d
+    while d <= end_d:
+        running = running + (deltas.get(d, 0))
+        balances[d] = running
+        d = d + timedelta(days=1)
+
+    # Heuristic salary checkpoints (optional): near configured day-of-month with inflow over threshold
+    checkpoints: list[dict] = []
+    if SALARY_DOM and 1 <= int(SALARY_DOM) <= 31 and int(SALARY_MIN_CENTS) > 0:
+        from calendar import monthrange
+
+        def target_for_month(y: int, m: int) -> date:
+            dom = int(SALARY_DOM)
+            last = monthrange(y, m)[1]
+            d = min(dom, last)
+            return date(y, m, d)
+
+        # Build windows per month and match deltas
+        d = start_d
+        seen_dates: set[date] = set()
+        while d <= end_d:
+            tgt = target_for_month(d.year, d.month)
+            win_start = tgt - timedelta(days=3)
+            win_end = tgt + timedelta(days=3)
+            # Iterate days in window within overall range
+            cursor = max(win_start, start_d)
+            while cursor <= min(win_end, end_d):
+                if cursor in deltas and deltas[cursor] >= int(SALARY_MIN_CENTS) and cursor not in seen_dates:
+                    checkpoints.append({
+                        "date": cursor.isoformat(),
+                        "amount_cents": int(deltas[cursor]),
+                    })
+                    seen_dates.add(cursor)
+                cursor = cursor + timedelta(days=1)
+            # Jump to first day of next month
+            if d.month == 12:
+                d = date(d.year + 1, 1, 1)
+            else:
+                d = date(d.year, d.month + 1, 1)
+
+    return {
+        "opening_balance_cents": opening,
+        "balances": {d.isoformat(): v for d, v in balances.items()},
+        "meta": {
+            "source": "ledger",
+            "db_path": str(dbp),
+            "window_days": (end_d - start_d).days + 1,
+        },
+        "checkpoints": checkpoints,
+    }
 
 
 def _load_key_event_lead_times(conn: sqlite3.Connection) -> dict[int, Optional[int]]:

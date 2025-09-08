@@ -21,7 +21,7 @@ from dotenv import load_dotenv
 from db.migrate import run_migrations
 load_dotenv()
 STAGING = os.getenv("STAGING", "false").lower() in ("1", "true", "yes")
-from config import BASE_PATH
+from config import BASE_PATH, CURRENCY_SYMBOL
 from jobs.daily_ingestion import scheduler_loop
 from jobs.backfill_payee_rules import backfill_from_ynab
 from forecast.calendar import Entry as FcEntry
@@ -60,7 +60,7 @@ def _money(cents: int | None) -> str:
     try:
         if cents is None:
             return "—"
-        return f"$ {cents/100:,.2f}"
+        return f"{CURRENCY_SYMBOL} {cents/100:,.2f}"
     except Exception:
         return str(cents)
 
@@ -511,7 +511,7 @@ async def get_budget_health(request: Request):
         csrf_token = os.getenv("CSRF_TOKEN") or None
         return templates.TemplateResponse(
             "budget_health.html",
-            {"request": request, "report_html": html_report, "csrf_token": csrf_token},
+            {"request": request, "report_html": html_report, "csrf_token": csrf_token, "currency_symbol": CURRENCY_SYMBOL},
         )
     except Exception as e:
         logger.error(f"Error generating budget health report: {e}")

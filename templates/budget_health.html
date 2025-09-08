@@ -7,6 +7,7 @@
     {% if csrf_token %}
     <meta name="csrf-token" content="{{ csrf_token }}">
     {% endif %}
+    <meta name="currency-symbol" content="{{ currency_symbol or '€' }}">
     <style>
       :root {
         --bg: #0f172a; /* slate-900 */
@@ -288,10 +289,11 @@
     </script>
 
     <script>
+      const CUR = (document.querySelector('meta[name="currency-symbol"]')?.getAttribute('content')) || '€';
       function fmtCents(cents) {
         const sign = cents < 0 ? '-' : '';
         const abs = Math.abs(cents);
-        return sign + '$' + (abs/100).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2});
+        return sign + CUR + (abs/100).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2});
       }
 
       function downsample(points, maxPoints=300) {
@@ -355,9 +357,9 @@
         for (let i = 0; i <= 4; i++) {
           const yVal = maxY - i * (yRange/4);
           const yy = padT + i * (innerH/4);
-          const dollars = yVal / 100;
-          const yAbs = Math.abs(dollars).toLocaleString(undefined, {maximumFractionDigits: 0});
-          const yLabel = dollars < 0 ? ('-$' + yAbs) : ('$' + yAbs);
+          const units = yVal / 100;
+          const yAbs = Math.abs(units).toLocaleString(undefined, {maximumFractionDigits: 0});
+          const yLabel = units < 0 ? ('-' + CUR + yAbs) : (CUR + yAbs);
           ctx.fillText(yLabel, padL - 6, yy);
         }
         // X labels (dates)
@@ -639,10 +641,9 @@
               const histEnd = new Date(startDate.getTime() - 1*86400000);
               const histStart = new Date(startDate.getTime() - 60*86400000);
               const iso = d => new Date(d.getTime()-d.getTimezoneOffset()*60000).toISOString().slice(0,10);
-              const urlH = new URL('{{ request.url_for("index") }}api/forecast/calendar'.replace(/\/$/, ''));
+              const urlH = new URL('{{ request.url_for("index") }}api/forecast/history'.replace(/\/$/, ''));
               urlH.searchParams.set('start', iso(histStart));
               urlH.searchParams.set('end', iso(histEnd));
-              urlH.searchParams.set('buffer_floor', String(buffer));
               const resH = await fetch(urlH.toString());
               if (resH.ok) {
                 const fh = await resH.json();
