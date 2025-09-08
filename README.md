@@ -120,6 +120,19 @@ uvicorn main:app --reload
 
 Open your browser at [http://localhost:8000](http://localhost:8000)
 
+### Running in staging/offline mode
+
+If you want to start the server without providing real YNAB or OpenAI credentials
+set the `STAGING` environment variable. In this mode the app returns placeholder
+responses and skips external API calls:
+
+```bash
+export STAGING=true
+uvicorn main:app --reload
+```
+
+This is useful for containerized test environments where secrets are unavailable.
+
 ### Optional: Daily 7:00 AM Ingestion
 
 This project can run a time-based job inside the FastAPI/uvicorn process that executes daily at a configured time (defaults to 07:00) to fetch recent transactions and optionally let the AI agent review and adjust categories.
