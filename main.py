@@ -100,6 +100,22 @@ try:
 except Exception:
     calendar_export_router = None
 
+# Include API routers at import time for conventional startup
+if forecast_router is not None:
+    app.include_router(forecast_router)
+if overview_router is not None:
+    app.include_router(overview_router)
+if key_events_router is not None:
+    app.include_router(key_events_router)
+if q_router is not None:
+    app.include_router(q_router)
+if q_export_router is not None:
+    app.include_router(q_export_router)
+if classify_router is not None:
+    app.include_router(classify_router)
+if calendar_export_router is not None:
+    app.include_router(calendar_export_router)
+
 # --- File upload Setup ---
 UPLOAD_DIR = Path("uploaded_receipts")
 UPLOAD_DIR.mkdir(exist_ok=True)
@@ -267,21 +283,6 @@ async def startup():
     # Initialize chat history DB used by the app
     init_db()
     logger.info("[INIT] Budget Buddy (SSE) startup complete.")
-    # Include routers after app init
-    if forecast_router is not None:
-        app.include_router(forecast_router)
-    if overview_router is not None:
-        app.include_router(overview_router)
-    if key_events_router is not None:
-        app.include_router(key_events_router)
-    if q_router is not None:
-        app.include_router(q_router)
-    if q_export_router is not None:
-        app.include_router(q_export_router)
-    if classify_router is not None:
-        app.include_router(classify_router)
-    if calendar_export_router is not None:
-        app.include_router(calendar_export_router)
     # Optionally start the daily ingestion scheduler
     enable = os.getenv("ENABLE_DAILY_INGESTION", "false").lower() in ("1", "true", "yes", "on")
     leader = os.getenv("SCHEDULER_LEADER", "true").lower() in ("1", "true", "yes", "on")
