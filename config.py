@@ -18,3 +18,13 @@ MONTE_CARLO_ENABLED = False
 MONTE_CARLO_MAX_ITER = 2000
 MONTE_CARLO_DEFAULT_ITER = 300
 MONTE_CARLO_DEFAULT_SEED = 1337
+
+# Currency settings
+# Default currency symbol for UI formatting
+CURRENCY_SYMBOL = "€"
+
+# Optional salary detection heuristics (not yet wired in UI)
+# Day of month for salary (1-31). If set to 0, disabled.
+SALARY_DOM = 28
+# Minimum inflow in cents to consider a salary checkpoint.
+SALARY_MIN_CENTS = 200000
