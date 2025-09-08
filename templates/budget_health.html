@@ -76,6 +76,10 @@
                 <option value="det">Deterministic</option>
                 <option value="blend">Blended</option>
               </select>
+              <label class="muted" for="acct-filter" style="margin-left:8px">Account</label>
+              <select id="acct-filter" style="background:#0b1222; color:var(--text); border:1px solid #374151; border-radius:6px; padding:4px 8px; min-width: 160px">
+                <option value="all" selected>All accounts</option>
+              </select>
               <label class="muted" for="forecast-horizon" style="margin-left:8px">Horizon</label>
               <select id="forecast-horizon" style="background:#0b1222; color:var(--text); border:1px solid #374151; border-radius:6px; padding:4px 8px">
                 <option value="auto" selected>Auto</option>
@@ -539,6 +543,30 @@
 
       async function loadUI(_fromPoll=false) {
         try {
+          // Populate accounts once
+          try {
+            const sel = document.getElementById('acct-filter');
+            if (sel && sel.options.length === 1) {
+              const r = await fetch('{{ request.url_for("index") }}api/accounts'.replace(/\/$/, ''));
+              if (r.ok) {
+                const j = await r.json();
+                const saved = localStorage.getItem('acct_filter') || 'all';
+                (j.accounts || []).forEach(acc => {
+                  const opt = document.createElement('option');
+                  opt.value = String(acc.id);
+                  opt.textContent = acc.name;
+                  sel.appendChild(opt);
+                });
+                // Restore selection
+                if ([...sel.options].some(o => o.value === saved)) sel.value = saved;
+                sel.addEventListener('change', () => {
+                  localStorage.setItem('acct_filter', sel.value);
+                  loadUI();
+                });
+              }
+            }
+          } catch {}
+
           // Load overview for horizon + buffer
           const resOv = await fetch('{{ request.url_for("index") }}api/overview'.replace(/\/$/, ''));
           const ov = await resOv.json();
@@ -576,6 +604,11 @@
           url.searchParams.set('start', start);
           url.searchParams.set('end', end);
           url.searchParams.set('buffer_floor', String(buffer));
+          try {
+            const sel = document.getElementById('acct-filter');
+            const v = sel?.value || 'all';
+            if (v !== 'all') url.searchParams.set('accounts', v);
+          } catch {}
           const resFc = await fetch(url.toString());
           if (!resFc.ok) throw new Error('Failed to load forecast');
           const fc = await resFc.json();
@@ -589,6 +622,12 @@
           let band = null;
           let usedFallback = false;
           if (mode === 'blend') {
+            const sel = document.getElementById('acct-filter');
+            const acctVal = sel?.value || 'all';
+            if (acctVal !== 'all') {
+              // Disable blended band when filtering by a single account (not yet supported)
+              document.getElementById('legend-band').style.display = 'none';
+            } else {
             const urlB = new URL('{{ request.url_for("index") }}api/forecast/blended'.replace(/\/$/, ''));
             urlB.searchParams.set('start', start);
             urlB.searchParams.set('end', end);
@@ -603,6 +642,7 @@
               document.getElementById('legend-band').style.display = '';
             } else {
               document.getElementById('legend-band').style.display = 'none';
+            }
             }
           } else {
             document.getElementById('legend-band').style.display = 'none';
@@ -644,6 +684,11 @@
               const urlH = new URL('{{ request.url_for("index") }}api/forecast/history'.replace(/\/$/, ''));
               urlH.searchParams.set('start', iso(histStart));
               urlH.searchParams.set('end', iso(histEnd));
+              try {
+                const sel = document.getElementById('acct-filter');
+                const v = sel?.value || 'all';
+                if (v !== 'all') urlH.searchParams.set('accounts', v);
+              } catch {}
               const resH = await fetch(urlH.toString());
               if (resH.ok) {
                 const fh = await resH.json();
