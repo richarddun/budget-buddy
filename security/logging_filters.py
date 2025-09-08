@@ -25,20 +25,34 @@ class RedactSecretsFilter(logging.Filter):
             if k.endswith("_TOKEN") and v and v not in self._secrets:
                 self._secrets.append(str(v))
 
+    def _redact_text(self, text: str) -> str:
+        redacted = text
+        for s in self._secrets:
+            if s:
+                redacted = redacted.replace(s, "***")
+        return redacted
+
     def filter(self, record: logging.LogRecord) -> bool:
         try:
-            # IMPORTANT: Using record.getMessage() formats msg % args.
-            # If we then mutate record.msg only and leave record.args intact,
-            # the logging framework will attempt to re-format and raise a TypeError.
-            # Strategy: redact on the fully formatted message and then clear args.
-            formatted = str(record.getMessage())
-            redacted = formatted
-            for s in self._secrets:
-                if s:
-                    redacted = redacted.replace(s, "***")
-            # Replace message with redacted text and clear args to avoid re-formatting
-            record.msg = redacted
-            record.args = ()
+            # If there are args (e.g., uvicorn.access expects 5-tuple), redact them in-place
+            # without clearing, to preserve formatter expectations.
+            if record.args:
+                if isinstance(record.args, dict):
+                    record.args = {
+                        k: (self._redact_text(v) if isinstance(v, str) else v)
+                        for k, v in record.args.items()
+                    }
+                elif isinstance(record.args, (list, tuple)):
+                    seq = [self._redact_text(a) if isinstance(a, str) else a for a in record.args]
+                    record.args = tuple(seq) if isinstance(record.args, tuple) else seq
+                # Redact any secrets that might appear in the format string itself
+                if isinstance(record.msg, str):
+                    record.msg = self._redact_text(record.msg)
+            else:
+                # No args: safe to redact on the fully formatted string and clear args
+                formatted = str(record.getMessage())
+                record.msg = self._redact_text(formatted)
+                record.args = ()
         except Exception:
             # Best effort: never break logging
             pass
