@@ -164,16 +164,16 @@ def test_api_forecast_blended_with_params(tmp_path, monkeypatch):
     data = resp.json()
 
     # On dates with baseline entries: 2025-01-03, 2025-01-05, 2025-01-06
-    # Calendar baseline (from other test): 4950, 4930, 5030
-    # Blended baseline subtracts 100 on each: 4850, 4830, 4930
+    # Calendar baseline: 5000, 3000, 13000
+    # Blended baseline subtracts 100 on each: 4900, 2900, 12900
     bb = data["baseline_blended"]
-    assert bb["2025-01-03"] == 4850
-    assert bb["2025-01-05"] == 4830
-    assert bb["2025-01-06"] == 4930
+    assert bb["2025-01-03"] == 4900
+    assert bb["2025-01-05"] == 2900
+    assert bb["2025-01-06"] == 12900
 
     # Bands: k*sigma = 0.8*50 = 40; lower/upper around blended
     lower = data["bands"]["lower"]
     upper = data["bands"]["upper"]
-    assert lower["2025-01-03"] == 4850 - 40
-    assert upper["2025-01-03"] == 4850 + 40
+    assert lower["2025-01-03"] == 4900 - 40
+    assert upper["2025-01-03"] == 4900 + 40
 

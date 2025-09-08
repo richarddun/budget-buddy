@@ -184,15 +184,13 @@ def export_pack(req: ExportRequest, request: Request):  # type: ignore[valid-typ
         csv_path = EXPORT_DIR / f"{base}.csv"
         with open(csv_path, "wb") as f:
             f.write(csv_bytes)
-        # Use request.url_for so links respect any reverse-proxy base path
-        resp["csv_url"] = request.url_for("exports", path=csv_path.name)
+        resp["csv_url"] = f"/exports/{csv_path.name}"
 
     if fmt in ("pdf", "both"):
         html = _render_pdf_html(redacted, hash_hex=hash_hex, generated_at_iso=ts)
         pdf_path = EXPORT_DIR / f"{base}.pdf.html"
         with open(pdf_path, "w", encoding="utf-8") as f:
             f.write(html)
-        # Use request.url_for so links respect any reverse-proxy base path
-        resp["pdf_url"] = request.url_for("exports", path=pdf_path.name)
+        resp["pdf_url"] = f"/exports/{pdf_path.name}"
 
     return resp

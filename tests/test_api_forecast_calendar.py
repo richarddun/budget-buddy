@@ -167,15 +167,15 @@ def test_api_forecast_calendar(tmp_path, monkeypatch):
     assert resp.status_code == 200
     data = resp.json()
 
-    # Opening balance is from transactions on/before 2025-01-01: 10000 - 5000 = 5000
-    assert data["opening_balance_cents"] == 5000
+    # Opening balance includes transactions strictly before 2025-01-01: 10000
+    assert data["opening_balance_cents"] == 10000
 
     # Expect balances for the 3 entry dates, and min balance on 2025-01-05
     balances = data["balances"]
-    assert balances["2025-01-03"] == 4950  # 5000 - 50
-    assert balances["2025-01-05"] == 4930  # 4950 - 20
-    assert balances["2025-01-06"] == 5030  # 4930 + 100
+    assert balances["2025-01-03"] == 5000  # Rent shifts to previous business day
+    assert balances["2025-01-05"] == 3000  # Birthday expense
+    assert balances["2025-01-06"] == 13000  # Payday shifted to next business day
 
-    assert data["min_balance_cents"] == 4930
+    assert data["min_balance_cents"] == 3000
     assert data["min_balance_date"] == "2025-01-05"
 

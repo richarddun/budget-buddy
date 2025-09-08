@@ -124,7 +124,7 @@ def test_commitment_drift_amount(tmp_path: Path):
         conn.execute("INSERT INTO categories(id,name,is_archived) VALUES (1,'Internet',0)")
         # Commitment: planned $100
         conn.execute(
-            "INSERT INTO commitments(id,name,amount_cents,due_rule,next_due_date,account_id,category_id,type) VALUES (1,'Internet Plan',10000,'MONTHLY',?,?,?,? , 'bill')",
+            "INSERT INTO commitments(id,name,amount_cents,due_rule,next_due_date,account_id,category_id,type) VALUES (1,'Internet Plan',10000,'MONTHLY',?,?,?,?)",
             (today.isoformat(), 1, 1, 'bill'),
         )
         # For each of last 3 full months, add expenses totaling $150
