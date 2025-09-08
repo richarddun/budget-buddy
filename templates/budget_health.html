@@ -242,7 +242,8 @@
       async function ensureKeyEventsIndex() {
         if (_keyEventsIndex) return _keyEventsIndex;
         try {
-          const res = await fetch('{{ request.url_for("index") }}api/key-events'.replace(/\/$/, ''));
+          const base = '{{ request.url_for("index") }}'.replace(/\/$/, '');
+          const res = await fetch(base + '/api/key-events');
           _keyEventsIndex = res.ok ? await res.json() : [];
         } catch { _keyEventsIndex = []; }
         return _keyEventsIndex;
@@ -272,7 +273,8 @@
           account_id: data.account_id ? Number(data.account_id) : undefined,
         };
         try {
-          const res = await fetch('{{ request.url_for("index") }}api/key-events'.replace(/\/$/, ''), {
+          const base = '{{ request.url_for("index") }}'.replace(/\/$/, '');
+          const res = await fetch(base + '/api/key-events', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', ...csrfHeader(), ...adminHeader() },
             body: JSON.stringify(payload),
@@ -296,7 +298,8 @@
         if (!id) { errBox.textContent = 'No ID'; return; }
         if (!confirm('Delete this key event?')) return;
         try {
-          const res = await fetch('{{ request.url_for("index") }}api/key-events/'.replace(/\/$/, '') + encodeURIComponent(id), {
+          const base = '{{ request.url_for("index") }}'.replace(/\/$/, '');
+          const res = await fetch(base + '/api/key-events/' + encodeURIComponent(id), {
             method: 'DELETE',
             headers: { ...csrfHeader(), ...adminHeader() },
           });
