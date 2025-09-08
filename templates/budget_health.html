@@ -75,6 +75,15 @@
                 <option value="det">Deterministic</option>
                 <option value="blend">Blended</option>
               </select>
+              <label class="muted" for="forecast-horizon" style="margin-left:8px">Horizon</label>
+              <select id="forecast-horizon" style="background:#0b1222; color:var(--text); border:1px solid #374151; border-radius:6px; padding:4px 8px">
+                <option value="auto" selected>Auto</option>
+                <option value="7">7 days</option>
+                <option value="14">14 days</option>
+                <option value="30">1 month</option>
+                <option value="90">3 months</option>
+                <option value="180">6 months</option>
+              </select>
               <span id="legend-band" class="badge" style="display:none">Blended band</span>
             </div>
             <div class="chart-wrap" aria-labelledby="lbl-runway" aria-live="polite">
@@ -487,9 +496,23 @@
           // Load overview for horizon + buffer
           const resOv = await fetch('{{ request.url_for("index") }}api/overview'.replace(/\/$/, ''));
           const ov = await resOv.json();
-          const start = ov.horizon?.start; const end = ov.horizon?.end;
+          let start = ov.horizon?.start; let end = ov.horizon?.end;
           const buffer = ov.buffer_floor_cents ?? 0;
           const asOfISO = (ov.snapshot?.created_at) || new Date().toISOString();
+
+          // Apply client-selected horizon override if chosen
+          try {
+            const hSel = document.getElementById('forecast-horizon');
+            const val = hSel?.value || 'auto';
+            if (val !== 'auto') {
+              const days = parseInt(val, 10);
+              const today = new Date(); today.setHours(0,0,0,0);
+              const to = new Date(today.getTime() + days*86400000);
+              const iso = d => new Date(d.getTime()-d.getTimezoneOffset()*60000).toISOString().slice(0,10);
+              start = iso(today);
+              end = iso(to);
+            }
+          } catch {}
 
           // Update iCal export link to match active horizon
           try {
@@ -668,6 +691,7 @@
         loadUI();
       });
       document.getElementById('forecast-mode')?.addEventListener('change', () => loadUI());
+      document.getElementById('forecast-horizon')?.addEventListener('change', () => loadUI());
 
       // Resize embedded report iframe to its content height
       const rep = document.getElementById('bh-report');
