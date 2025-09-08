@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Unmatched Transactions</title>
-  <link rel="stylesheet" href="/static/styles.css" />
+  <link rel="stylesheet" href="{{ request.url_for('static', path='styles.css') }}" />
   <style>
     body { font-family: system-ui, Arial, sans-serif; margin: 1rem; }
     .row { display: grid; grid-template-columns: 10rem 10rem 1fr 1fr 12rem 10rem; gap: 0.5rem; align-items: center; padding: 0.25rem 0; }
@@ -14,7 +14,7 @@
   </style>
   <script>
     async function loadUnmatched() {
-      const res = await fetch('/api/classify/unmapped?limit=50');
+      const res = await fetch('{{ request.url_for("list_unmapped") }}?limit=50');
       const data = await res.json();
       const list = document.getElementById('list');
       list.innerHTML = '';
@@ -43,7 +43,7 @@
 
     async function acceptMap(csvCategory, internalId) {
       const payload = { mapping_source: 'ynab-csv', external_id: csvCategory, internal_category_id: internalId };
-      const res = await fetch('/api/classify/accept', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+      const res = await fetch('{{ request.url_for("accept_suggestion") }}', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
       const data = await res.json();
       if (data.ok) {
         alert('Mapping saved for ' + csvCategory);
@@ -62,4 +62,3 @@
   <div id="list"></div>
 </body>
 </html>
-
