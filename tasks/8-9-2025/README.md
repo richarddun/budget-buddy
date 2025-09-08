@@ -22,11 +22,13 @@ Use this checklist to track progress for today’s iteration. Update the checkbo
 
 3. [03-key-events-csrf-admin-wiring.md](03-key-events-csrf-admin-wiring.md) — CSRF/Admin headers for Key Events modal.
    
-   Complete : [ ]
+   Complete : [X]
    
-   Related Commit : 
+   Related Commit : f09a06474ac0dacce0e70ae07f7eb426e74d6378
    
    Summary: Inject CSRF meta when configured and attach headers on POST/DELETE; optional dev helper for Admin token (localStorage). Ensures UI works under auth.
+   
+   Work Done: Added conditional `<meta name="csrf-token">` to `templates/budget_health.html` via `csrf_token` passed from `main.py` (read from `CSRF_TOKEN`). Updated Key Events modal requests to include `X-CSRF-Token` and optional `X-Admin-Token` (from `localStorage` key `adminToken`) on POST/DELETE. Behavior unchanged when tokens are not set.
 
 4. [04-ui-link-unmatched-classifier.md](04-ui-link-unmatched-classifier.md) — Add sidebar link to Unmatched Review.
    
