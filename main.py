@@ -31,6 +31,8 @@ from security.deps import require_auth as _require_auth_dep, require_csrf as _re
 
 def check_api_keys():
     """Return a warning message if API keys are missing."""
+    if os.getenv("STAGING", "false").lower() in ("1", "true", "yes"):
+        return None
     if os.getenv("OAI_KEY") is None:
         logger.info("OpenAI API key missing. Returning instructional message.")
         return (
