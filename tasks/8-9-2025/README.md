@@ -42,11 +42,13 @@ Use this checklist to track progress for today’s iteration. Update the checkbo
 
 5. [05-ui-ical-export-affordance.md](05-ui-ical-export-affordance.md) — Add iCal export button to Budget Health.
    
-   Complete : [ ]
+   Complete : [X]
    
-   Related Commit : 
+   Related Commit : 209b8e0853159556a78a3a420c5f0cac08be0b38
    
    Summary: Provide a “Download .ics” affordance using the active horizon to call `/api/calendar/ical?from=...&to=...`.
+   
+   Work Done: Added a "📅 Download .ics" button in `templates/budget_health.html` header. `loadUI()` now reads the horizon from `/api/overview` and sets the button href to `/api/calendar/ical?from=<start>&to=<end>` on every refresh; the link is shown once populated and triggers a file download.
 
 6. [06-ui-questionnaire-export-hook.md](06-ui-questionnaire-export-hook.md) — Minimal UI to trigger pack export.
    
