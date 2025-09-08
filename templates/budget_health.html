@@ -58,6 +58,7 @@
       <div class="header">
         <h1 style="margin:0">📊 Budget Health</h1>
         <div style="display:flex; gap:8px; align-items:center">
+          <a id="btn-ical" href="#" download style="display:none; padding:8px 12px; border-radius:6px; background:#3b82f6; color:#06142b; font-weight:600; text-decoration:none">📅 Download .ics</a>
           <button id="btn-add-key-event" type="button" style="padding:8px 12px; border-radius:6px; background:#10b981; color:#031b17; font-weight:600; border:none; cursor:pointer">＋ Key Event</button>
           <a class="back" href="{{ request.url_for('index') }}">← Back to Chat</a>
         </div>
@@ -456,6 +457,18 @@
           const start = ov.horizon?.start; const end = ov.horizon?.end;
           const buffer = ov.buffer_floor_cents ?? 0;
           const asOfISO = (ov.snapshot?.created_at) || new Date().toISOString();
+
+          // Update iCal export link to match active horizon
+          try {
+            const ical = document.getElementById('btn-ical');
+            if (ical && start && end) {
+              const icalUrl = new URL('{{ request.url_for("index") }}api/calendar/ical'.replace(/\/$/, ''));
+              icalUrl.searchParams.set('from', start);
+              icalUrl.searchParams.set('to', end);
+              ical.setAttribute('href', icalUrl.toString());
+              ical.style.display = '';
+            }
+          } catch {}
 
           const url = new URL('{{ request.url_for("index") }}api/forecast/calendar'.replace(/\/$/, ''));
           url.searchParams.set('start', start);
