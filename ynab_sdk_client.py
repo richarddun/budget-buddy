@@ -4,20 +4,69 @@ import json
 from pathlib import Path
 import os
 from dotenv import load_dotenv
-from ynab import Configuration, ApiClient, BudgetsApi, TransactionsApi, AccountsApi, ScheduledTransactionsApi, CategoriesApi
-
 from datetime import datetime, timedelta, date
-import json
 import logging
+
+from ynab import (
+    Configuration,
+    ApiClient,
+    BudgetsApi,
+    TransactionsApi,
+    AccountsApi,
+    ScheduledTransactionsApi,
+    CategoriesApi,
+)
+
 logger = logging.getLogger("uvicorn.error")
 
 load_dotenv()
+STAGING = os.getenv("STAGING", "false").lower() in {"1", "true", "yes"}
 
 class YNABSdkClient:
     # 🔹 Class-level constants (shared across all instances)
     CACHE_TTL_HOURS = 6
 
     def __init__(self):
+        """Initialize either a real or dummy YNAB client depending on STAGING."""
+        if STAGING:
+            # Pre-built dummy data to allow the app to run without credentials
+            self._dummy_budget = {
+                "id": "dummy-budget-id",
+                "name": "Staging Budget",
+                "first_month": "2024-01-01",
+                "last_month": "2024-12-01",
+                "currency_format": {"iso_code": "USD"},
+                "accounts": [
+                    {"id": "acct-1", "name": "Checking", "type": "checking", "balance": 100000},
+                    {"id": "acct-2", "name": "Savings", "type": "savings", "balance": 250000},
+                ],
+            }
+            self._dummy_transactions = [
+                {
+                    "id": "txn-1",
+                    "account_id": "acct-1",
+                    "date": "2024-10-01",
+                    "amount": -5000,
+                    "payee_name": "Coffee Shop",
+                    "memo": "Latte",
+                },
+                {
+                    "id": "txn-2",
+                    "account_id": "acct-2",
+                    "date": "2024-10-02",
+                    "amount": 200000,
+                    "payee_name": "Paycheck",
+                    "memo": "",
+                },
+            ]
+
+            # Expose dummy read methods through cache wrapper for compatibility
+            self.get_budget = self.cacheable(self._get_budget_staging)
+            self.get_budget_details = self.cacheable(self._get_budget_details_staging)
+            self.get_transactions = self.cacheable(self._get_transactions_staging)
+            self.get_accounts = self.cacheable(self._get_accounts_staging)
+            return
+
         # 🔸 Instance-level configuration (specific to this client)
         # NOTE:
         # Only pure read methods are wrapped with self.cacheable().
@@ -36,7 +85,7 @@ class YNABSdkClient:
         self.scheduled_transactions_api = ScheduledTransactionsApi(self.api_client)
         self.categories_api = CategoriesApi(self.api_client)
 
-        # 🔸 Read APIs (not caching scheduled_transactions at this time) 
+        # 🔸 Read APIs (not caching scheduled_transactions at this time)
         self.get_accounts = self.cacheable(self.get_accounts)
         self.get_budget_details = self.cacheable(self._get_budget_details_uncached)
         self.get_scheduled_transactions = self.cacheable(self.get_scheduled_transactions)
@@ -45,6 +94,21 @@ class YNABSdkClient:
     def _get_budget_details_uncached(self, budget_id):
         raw_budget = self.budgets_api.get_budget_by_id(budget_id).data.budget
         return self._normalize_currency_fields(raw_budget.to_dict())
+
+    # --- Staging helpers -------------------------------------------------
+
+    def _get_budget_staging(self):
+        """Return a minimal budgets list for staging."""
+        return {"budgets": [{"id": self._dummy_budget["id"], "name": self._dummy_budget["name"]}]}
+
+    def _get_budget_details_staging(self, budget_id):
+        return self._normalize_currency_fields(self._dummy_budget)
+
+    def _get_transactions_staging(self, budget_id, since_date=None):
+        return self._normalize_currency_fields(self._dummy_transactions)
+
+    def _get_accounts_staging(self, budget_id):
+        return self._normalize_currency_fields(self._dummy_budget.get("accounts", []))
 
     def get_accounts(self, budget_id):
         return self._normalize_currency_fields([a.to_dict() for a in self.accounts_api.get_accounts(budget_id).data.accounts])
