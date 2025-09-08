@@ -157,7 +157,8 @@
             <input name="event_date" type="date" required style="width:100%; padding:8px; border-radius:6px; border:1px solid #374151; background:#0b1222; color:var(--text)" />
           </label>
           <label>Amount (cents)
-            <input name="planned_amount_cents" type="number" step="1" min="0" style="width:100%; padding:8px; border-radius:6px; border:1px solid #374151; background:#0b1222; color:var(--text)" />
+            <input name="planned_amount_cents" type="number" step="1" style="width:100%; padding:8px; border-radius:6px; border:1px solid #374151; background:#0b1222; color:var(--text)" />
+            <div class="muted" style="font-size:11px; margin-top:4px">Hint: Positive values subtract from balance (cost). Negative values add to balance (income).</div>
           </label>
           <label>Repeat
             <select name="repeat_rule" style="width:100%; padding:8px; border-radius:6px; border:1px solid #374151; background:#0b1222; color:var(--text)">
@@ -236,6 +237,24 @@
         } catch { return {}; }
       }
 
+      // Cached fetch of key events for quick edit/delete prefill
+      let _keyEventsIndex = null;
+      async function ensureKeyEventsIndex() {
+        if (_keyEventsIndex) return _keyEventsIndex;
+        try {
+          const res = await fetch('{{ request.url_for("index") }}api/key-events'.replace(/\/$/, ''));
+          _keyEventsIndex = res.ok ? await res.json() : [];
+        } catch { _keyEventsIndex = []; }
+        return _keyEventsIndex;
+      }
+      async function openKeyEventById(id) {
+        try {
+          const list = await ensureKeyEventsIndex();
+          const item = list.find(e => e.id === Number(id));
+          if (item) openModal(item);
+        } catch {}
+      }
+
       form?.addEventListener('submit', async (e) => {
         e.preventDefault(); errBox.textContent='';
         const data = Object.fromEntries(new FormData(form).entries());
@@ -263,6 +282,7 @@
             throw new Error(j.detail || 'Error saving event');
           }
           closeModal();
+          _keyEventsIndex = null; // bust cache
           // Refresh the UI to show effects in forecast
           loadUI();
         } catch (err) {
@@ -285,6 +305,7 @@
             throw new Error(j.detail || 'Error deleting event');
           }
           closeModal();
+          _keyEventsIndex = null; // bust cache
           loadUI();
         } catch (err) {
           errBox.textContent = String(err.message || err);
@@ -472,11 +493,14 @@
           el.setAttribute('aria-label', m.aria);
           el.setAttribute('title', m.title);
           el.tabIndex = 0;
-          el.addEventListener('click', () => {
-            // Simple drilldown: announce in legend and focus canvas
+          el.addEventListener('click', async () => {
+            // Announce in legend and focus canvas; open editor for key events
             const legend = document.getElementById('legend-meta');
             if (legend) legend.textContent = m.title;
             canvas.focus();
+            if (m.type === 'key_event' && m.id) {
+              try { await openKeyEventById(m.id); } catch {}
+            }
           });
           layer.appendChild(el);
         });
@@ -670,7 +694,8 @@
               type: e.type,
               name: e.name,
               date: e.date,
-              amount_cents: e.amount_cents
+              amount_cents: e.amount_cents,
+              id: (e.type === 'key_event' ? e.source_id : null)
             }));
 
           // Load last 60 days history to provide recent trend
@@ -733,6 +758,12 @@
             else { pill.className = 'pill good'; pill.textContent = `${days}d`; }
             right.innerHTML = `<span class=\"muted\" style=\"margin-right:8px\">${e.date}</span>${fmtCents(e.amount_cents)} `;
             right.appendChild(pill);
+            if (e.type === 'key_event' && e.source_id) {
+              const btn = document.createElement('button');
+              btn.className = 'btn-link'; btn.type = 'button'; btn.textContent = 'Edit';
+              btn.addEventListener('click', async (ev) => { ev.stopPropagation(); try { await openKeyEventById(e.source_id); } catch {} });
+              right.appendChild(btn);
+            }
             li.appendChild(left); li.appendChild(right); ul.appendChild(li);
           });
 

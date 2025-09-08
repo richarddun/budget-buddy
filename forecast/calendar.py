@@ -230,7 +230,8 @@ def expand_calendar(start: date, end: date, *, db_path: Optional[Path] = None, a
                         date=shifted_date,
                         type="key_event",
                         name=row["name"],
-                        amount_cents=-abs(amount),
+                        # Semantics: positive planned amount = cost (subtract); negative = income (add)
+                        amount_cents=-amount,
                         source_id=int(row["id"]),
                         shift_applied=shifted,
                         policy=used,
