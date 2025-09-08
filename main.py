@@ -438,9 +438,11 @@ async def get_budget_health(request: Request):
     try:
         analyzer = BudgetHealthAnalyzer(BUDGET_ID)
         html_report = analyzer.generate_html_report()
+        # Conditionally expose CSRF token to the template when configured
+        csrf_token = os.getenv("CSRF_TOKEN") or None
         return templates.TemplateResponse(
             "budget_health.html",
-            {"request": request, "report_html": html_report},
+            {"request": request, "report_html": html_report, "csrf_token": csrf_token},
         )
     except Exception as e:
         logger.error(f"Error generating budget health report: {e}")
