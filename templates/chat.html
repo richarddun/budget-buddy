@@ -290,6 +290,9 @@
             >
                 📅 Rest of This Month
             </button>
+            <button onclick="window.location.href='{{ request.url_for('view_unmatched') }}'">
+                🧩 Unmatched Transactions
+            </button>
             <h2>Quick Prompts</h2>
             <button
                 onclick="setPrompt('What are my most recent transactions?')"
