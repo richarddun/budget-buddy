@@ -279,6 +279,9 @@
         </div>
         <div id="sidebar">
             <h2>Reports</h2>
+            <button onclick="window.open('{{ request.url_for('overview') }}', '_blank')">
+                📊 Overview
+            </button>
             <button onclick="window.open('{{ request.url_for('get_budget_health') }}', '_blank')">
                 📊 Budget Health Report
             </button>
