@@ -38,6 +38,20 @@ Snapshot YNAB categories and refresh `category_map`
   - Otherwise maps to the internal `Holding` category (auto-created if missing).
 - Output includes counts for groups, categories, upserts, and maps touched.
 
+## DB Reset
+
+Destructive reset (purge DB file, re-create schema, and repopulate)
+- `python -m budgetctl db reset --force` (default repopulates via categories sync + 1-month backfill)
+- Options:
+  - `--db PATH` — target DB file (default `localdb/budget.db`)
+  - `--no-populate` — skip pulling data (schema only)
+  - `--delta` — populate via delta sync instead of backfill
+  - `--backfill --months N` — populate via backfill (default N=1)
+
+Notes
+- Requires `YNAB_TOKEN` and `YNAB_BUDGET_ID` when populate is enabled.
+- Use `--force` to bypass the safety check when deleting an existing DB file.
+
 ## Reconcile
 
 Lightweight reconciliation check

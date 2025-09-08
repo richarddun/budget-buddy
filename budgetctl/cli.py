@@ -58,6 +58,41 @@ def build_parser() -> argparse.ArgumentParser:
     migrate_parser = db_sub.add_parser("migrate", help="Run DB migrations")
     _add_common_db_arg(migrate_parser)
 
+    # db reset (purge + migrate + optional populate)
+    reset_parser = db_sub.add_parser(
+        "reset",
+        help="Purge the DB file, re-create schema, and optionally repopulate",
+    )
+    _add_common_db_arg(reset_parser)
+    reset_mode = reset_parser.add_mutually_exclusive_group()
+    reset_mode.add_argument(
+        "--delta",
+        action="store_true",
+        help="After reset, run delta sync (default: backfill)",
+    )
+    reset_mode.add_argument(
+        "--backfill",
+        action="store_true",
+        help="After reset, run backfill (default)",
+    )
+    reset_parser.add_argument(
+        "--months",
+        type=int,
+        default=1,
+        help="Backfill horizon in months (when using backfill)",
+    )
+    reset_parser.add_argument(
+        "--no-populate",
+        dest="no_populate",
+        action="store_true",
+        help="Do not pull data after reset (schema only)",
+    )
+    reset_parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Do not prompt; proceed with destructive reset",
+    )
+
     return parser
 
 
@@ -90,6 +125,21 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "db" and args.db_command == "migrate":
         return admin_handlers.db_migrate(args.db)
+
+    if args.command == "db" and args.db_command == "reset":
+        # Determine populate mode
+        populate = not args.no_populate
+        use_delta = bool(args.delta)
+        # If neither --delta nor --backfill specified, default is backfill
+        if args.backfill:
+            use_delta = False
+        return admin_handlers.db_reset(
+            args.db,
+            populate=populate,
+            delta=use_delta,
+            months=args.months,
+            force=args.force,
+        )
 
     parser.print_help()
     return 1
