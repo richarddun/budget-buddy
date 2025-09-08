@@ -61,9 +61,11 @@ Use this checklist to track progress for today’s iteration. Update the checkbo
    Work Done: Added a “Questionnaire Export” section to `templates/overview.html` with a minimal control to select pack and format, then POST to `/api/q/export` (default `loan_application_basics`, period `3m_full`). On success, renders CSV/PDF links plus hash/timestamp. Reused CSRF and optional Admin headers; updated `main.py` to pass `csrf_token` to the overview template.
 
 7. [07-main-router-include-cleanup.md](07-main-router-include-cleanup.md) — Register routers outside startup.
+  
+   Complete : [X]
    
-   Complete : [ ]
-   
-   Related Commit : 
+   Related Commit : bb80fa45ad502ee430d7434ab1a2ea019cdec351
    
    Summary: Move `include_router` calls to module load time (post `app = FastAPI(...)`) for conventional startup and route availability.
+   
+   Work Done: Included all API routers in `main.py` immediately after router imports (right after app init) and removed router inclusion from the `startup` handler. Left migrations and scheduler initialization in `startup` unchanged.
