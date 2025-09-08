@@ -1,5 +1,22 @@
+<style>
+  .message.system .prompt, .message.system .response { color: #bbb; }
+  .system-badge {
+    display: inline-block;
+    padding: 2px 6px;
+    margin-right: 6px;
+    border-radius: 4px;
+    background: #444;
+    color: #ccc;
+    font-size: 0.8em;
+  }
+  .message { margin-bottom: 0.5em; }
+</style>
 {% for entry in chat_history %}
-<strong>You: </strong><span>{{ entry.prompt }}</span><br><br>
-<strong>Agent: </strong><span>{{ entry.response | safe }}</span><br><br>
+{% set is_system = entry.prompt.startswith('[system]') %}
+<div class="message{% if is_system %} system{% endif %}">
+  {% if is_system %}<span class="system-badge">system</span>{% endif %}
+  <strong>You: </strong><span class="prompt">{{ entry.prompt }}</span><br><br>
+  <strong>Agent: </strong><span class="response">{{ entry.response | safe }}</span><br><br>
   <hr>
+</div>
 {% endfor %}

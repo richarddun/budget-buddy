@@ -308,10 +308,89 @@ async def shutdown():
         except asyncio.CancelledError:
             pass
 
+def _has_system_digest_today(conn: sqlite3.Connection) -> bool:
+    try:
+        cur = conn.execute(
+            """
+            SELECT 1
+            FROM messages
+            WHERE prompt LIKE '[system] Daily Digest (%' AND date(timestamp) = date('now')
+            LIMIT 1
+            """
+        )
+        return cur.fetchone() is not None
+    except Exception:
+        return False
+
+
+def _format_money(cents: int | None) -> str:
+    try:
+        if cents is None:
+            return "—"
+        return f"$ {cents/100:,.2f}"
+    except Exception:
+        return str(cents)
+
+
+def _summarize_digest_for_message(digest: dict) -> str:
+    try:
+        bal = _format_money(digest.get("current_balance_cents"))
+        sts = _format_money(digest.get("safe_to_spend_today_cents"))
+        next_cliff = (digest.get("balances", {}) or {}).get("next_cliff_date") or "—"
+        min_bal_cents = (digest.get("balances", {}) or {}).get("min_balance_cents")
+        min_bal = _format_money(min_bal_cents)
+        min_date = (digest.get("balances", {}) or {}).get("min_balance_date") or "—"
+        parts = [
+            f"Current balance: <strong>{bal}</strong>",
+            f"Safe to spend today: <strong>{sts}</strong>",
+            f"Next cliff: <strong>{next_cliff}</strong>",
+            f"Min balance/date: <strong>{min_bal}</strong> on <strong>{min_date}</strong>",
+        ]
+        top = digest.get("top_commitments_next_14_days") or []
+        if top:
+            items = []
+            for c in top[:5]:
+                try:
+                    items.append(
+                        f"{c.get('date')} — {c.get('name')}: <strong>{_format_money(int(c.get('amount_cents', 0)))}</strong>"
+                    )
+                except Exception:
+                    continue
+            parts.append("Top commitments (next 14 days):<br>" + "<br>".join(items))
+        return "<br>".join(parts)
+    except Exception:
+        return "Daily digest summary unavailable."
+
+
+def _ensure_today_digest_message_inserted(digest: dict | None) -> None:
+    if not digest:
+        return
+    try:
+        today_iso = datetime.utcnow().date().isoformat()
+        conn = sqlite3.connect(DB_PATH)
+        try:
+            if _has_system_digest_today(conn):
+                return
+            prompt = f"[system] Daily Digest ({today_iso})"
+            response = _summarize_digest_for_message(digest)
+            conn.execute(
+                "INSERT INTO messages (prompt, response) VALUES (?, ?)",
+                (prompt, response),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+    except Exception as e:
+        logger.exception(f"[DIGEST] Failed to upsert system message: {e}")
+
+
 @app.get("/", response_class=HTMLResponse)
 async def index(request: Request):
-    chat_history = load_recent_messages()
+    # Compute digest and ensure a single system message for today exists
     digest = compute_latest_digest()
+    _ensure_today_digest_message_inserted(digest)
+    # Load chat after potential insertion so it appears at the top
+    chat_history = load_recent_messages()
     return templates.TemplateResponse(
         "chat.html",
         {"request": request, "chat_history": chat_history, "digest": digest},

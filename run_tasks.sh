@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Directory containing task files and README
-TASK_DIR="tasks"
+TASK_DIR="tasks/8-9-2025"
 README="$TASK_DIR/README.md"
 
 for TASK_FILE in "$TASK_DIR"/[0-9][0-9]-*.md; do
