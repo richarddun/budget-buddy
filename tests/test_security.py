@@ -68,38 +68,37 @@ def test_auth_and_csrf_enforced_when_configured(tmp_path, monkeypatch):
     monkeypatch.setenv("CSRF_TOKEN", "csrftest")
 
     app = load_app()
-    client = TestClient(app)
+    with TestClient(app) as client:
+        # 1) No headers -> unauthorized
+        r1 = client.post(
+            "/api/key-events",
+            json={"name": "X", "event_date": "2025-01-01"},
+        )
+        assert r1.status_code == 401
 
-    # 1) No headers -> unauthorized
-    r1 = client.post(
-        "/api/key-events",
-        json={"name": "X", "event_date": "2025-01-01"},
-    )
-    assert r1.status_code == 401
+        # 2) Only auth -> missing CSRF
+        r2 = client.post(
+            "/api/key-events",
+            json={"name": "X", "event_date": "2025-01-01"},
+            headers={"Authorization": "Bearer admintest"},
+        )
+        assert r2.status_code == 403
 
-    # 2) Only auth -> missing CSRF
-    r2 = client.post(
-        "/api/key-events",
-        json={"name": "X", "event_date": "2025-01-01"},
-        headers={"Authorization": "Bearer admintest"},
-    )
-    assert r2.status_code == 403
+        # 3) Only CSRF -> missing auth
+        r3 = client.post(
+            "/api/key-events",
+            json={"name": "X", "event_date": "2025-01-01"},
+            headers={"X-CSRF-Token": "csrftest"},
+        )
+        assert r3.status_code == 401
 
-    # 3) Only CSRF -> missing auth
-    r3 = client.post(
-        "/api/key-events",
-        json={"name": "X", "event_date": "2025-01-01"},
-        headers={"X-CSRF-Token": "csrftest"},
-    )
-    assert r3.status_code == 401
-
-    # 4) Both -> OK
-    r4 = client.post(
-        "/api/key-events",
-        json={"name": "X", "event_date": "2025-01-01"},
-        headers={"Authorization": "Bearer admintest", "X-CSRF-Token": "csrftest"},
-    )
-    assert r4.status_code == 200
+        # 4) Both -> OK
+        r4 = client.post(
+            "/api/key-events",
+            json={"name": "X", "event_date": "2025-01-01"},
+            headers={"Authorization": "Bearer admintest", "X-CSRF-Token": "csrftest"},
+        )
+        assert r4.status_code == 200
 
 
 def test_rate_limit_for_admin_routes(tmp_path, monkeypatch):
@@ -157,16 +156,19 @@ def test_rate_limit_for_admin_routes(tmp_path, monkeypatch):
     monkeypatch.setenv("CSRF_TOKEN", "csrftest")
     monkeypatch.setenv("ADMIN_RATE_LIMIT", "2/60s")
 
-    app = load_app()
-    client = TestClient(app)
-    headers = {"Authorization": "Bearer admintest", "X-CSRF-Token": "csrftest"}
+    from security import deps
+    deps._RL_STORE.clear()
 
-    # Two requests pass
-    r1 = client.post("/api/q/export", json={"pack": "affordability_snapshot", "format": "csv"}, headers=headers)
-    r2 = client.post("/api/q/export", json={"pack": "affordability_snapshot", "format": "csv"}, headers=headers)
-    assert r1.status_code == 200
-    assert r2.status_code == 200
-    # Third should be rate-limited in same window
-    r3 = client.post("/api/q/export", json={"pack": "affordability_snapshot", "format": "csv"}, headers=headers)
-    assert r3.status_code == 429
+    app = load_app()
+    with TestClient(app) as client:
+        headers = {"Authorization": "Bearer admintest", "X-CSRF-Token": "csrftest"}
+
+        # Two requests pass
+        r1 = client.post("/api/q/export", json={"pack": "affordability_snapshot", "format": "csv"}, headers=headers)
+        r2 = client.post("/api/q/export", json={"pack": "affordability_snapshot", "format": "csv"}, headers=headers)
+        assert r1.status_code == 200
+        assert r2.status_code == 200
+        # Third should be rate-limited in same window
+        r3 = client.post("/api/q/export", json={"pack": "affordability_snapshot", "format": "csv"}, headers=headers)
+        assert r3.status_code == 429
 

@@ -46,11 +46,11 @@ def test_suggest_uses_payee_rules(tmp_path):
     db_path = tmp_path / "budget_classifier.db"
     _init_db(db_path)
 
-    # Seed a payee rule: icontains("starbucks") -> subcategory "Coffee"
+    # Seed a payee rule: icontains("starbucks store") -> subcategory "Coffee"
     from localdb import payee_db
 
     payee_db.upsert_rule(
-        pattern="starbucks",
+        pattern="starbucks store",
         match_type="icontains",
         suggested_category=None,
         suggested_subcategory="Coffee",

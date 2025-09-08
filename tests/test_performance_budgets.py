@@ -112,31 +112,32 @@ def test_forecast_120d_latency_and_overview_size(tmp_path, monkeypatch):
     monkeypatch.setenv("BUDGET_DB_PATH", str(db_path))
 
     app = load_app()
-    client = TestClient(app)
+    import main as main_mod
+    monkeypatch.setattr(main_mod, "SOT_DB_PATH", db_path)
+    with TestClient(app) as client:
+        start = date.today().isoformat()
+        end = (date.today() + timedelta(days=120)).isoformat()
 
-    start = date.today().isoformat()
-    end = (date.today() + timedelta(days=120)).isoformat()
+        # Warmup request (exclude initialization costs from timing)
+        r0 = client.get("/api/forecast/calendar", params={"start": start, "end": end, "buffer_floor": 0})
+        assert r0.status_code == 200
 
-    # Warmup request (exclude initialization costs from timing)
-    r0 = client.get("/api/forecast/calendar", params={"start": start, "end": end, "buffer_floor": 0})
-    assert r0.status_code == 200
+        # Measure a few runs and take median
+        samples = []
+        for _ in range(3):
+            t0 = time.perf_counter()
+            resp = client.get("/api/forecast/calendar", params={"start": start, "end": end, "buffer_floor": 0})
+            dt = (time.perf_counter() - t0) * 1000.0
+            assert resp.status_code == 200
+            samples.append(dt)
+        samples.sort()
+        median_ms = samples[1]
 
-    # Measure a few runs and take median
-    samples = []
-    for _ in range(3):
-        t0 = time.perf_counter()
-        resp = client.get("/api/forecast/calendar", params={"start": start, "end": end, "buffer_floor": 0})
-        dt = (time.perf_counter() - t0) * 1000.0
-        assert resp.status_code == 200
-        samples.append(dt)
-    samples.sort()
-    median_ms = samples[1]
+        assert median_ms <= 150.0, f"Forecast median latency {median_ms:.2f}ms exceeds 150ms budget"
 
-    assert median_ms <= 150.0, f"Forecast median latency {median_ms:.2f}ms exceeds 150ms budget"
-
-    # Dashboard/overview payload size budget (<= 200KB)
-    ro = client.get("/api/overview")
-    assert ro.status_code == 200
-    size_bytes = len(ro.content or b"")
-    assert size_bytes <= 200 * 1024, f"Overview JSON size {size_bytes} bytes exceeds 200KB budget"
+        # Dashboard/overview payload size budget (<= 200KB)
+        ro = client.get("/api/overview")
+        assert ro.status_code == 200
+        size_bytes = len(ro.content or b"")
+        assert size_bytes <= 200 * 1024, f"Overview JSON size {size_bytes} bytes exceeds 200KB budget"
 

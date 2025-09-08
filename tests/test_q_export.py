@@ -113,32 +113,32 @@ def test_export_endpoint_generates_files(tmp_path, monkeypatch):
     monkeypatch.setenv("BUDGET_DB_PATH", str(db_path))
 
     app = load_app()
-    client = TestClient(app)
+    with TestClient(app) as client:
 
-    # CSV export first
-    r = client.post(
-        "/api/q/export",
-        json={"pack": "affordability_snapshot", "period": "3m_full", "format": "csv"},
-    )
-    assert r.status_code == 200
-    data = r.json()
-    assert "csv_url" in data and data["csv_url"].startswith("/exports/")
-    # File exists and contains hash string
-    csv_path = Path("localdb/exports") / Path(data["csv_url"]).name
-    assert csv_path.exists()
-    content = csv_path.read_text(encoding="utf-8")
-    assert data["hash"] in content
+        # CSV export first
+        r = client.post(
+            "/api/q/export",
+            json={"pack": "affordability_snapshot", "period": "3m_full", "format": "csv"},
+        )
+        assert r.status_code == 200
+        data = r.json()
+        assert "csv_url" in data and data["csv_url"].startswith("/exports/")
+        # File exists and contains hash string
+        csv_path = Path("localdb/exports") / Path(data["csv_url"]).name
+        assert csv_path.exists()
+        content = csv_path.read_text(encoding="utf-8")
+        assert data["hash"] in content
 
-    # PDF (HTML) export
-    r2 = client.post(
-        "/api/q/export",
-        json={"pack": "affordability_snapshot", "period": "3m_full", "format": "pdf"},
-    )
-    assert r2.status_code == 200
-    data2 = r2.json()
-    assert "pdf_url" in data2 and data2["pdf_url"].startswith("/exports/")
-    html_path = Path("localdb/exports") / Path(data2["pdf_url"]).name
-    assert html_path.exists()
-    html = html_path.read_text(encoding="utf-8")
-    assert data2["hash"] in html
+        # PDF (HTML) export
+        r2 = client.post(
+            "/api/q/export",
+            json={"pack": "affordability_snapshot", "period": "3m_full", "format": "pdf"},
+        )
+        assert r2.status_code == 200
+        data2 = r2.json()
+        assert "pdf_url" in data2 and data2["pdf_url"].startswith("/exports/")
+        html_path = Path("localdb/exports") / Path(data2["pdf_url"]).name
+        assert html_path.exists()
+        html = html_path.read_text(encoding="utf-8")
+        assert data2["hash"] in html
 
