@@ -32,11 +32,13 @@ Use this checklist to track progress for today’s iteration. Update the checkbo
 
 4. [04-ui-link-unmatched-classifier.md](04-ui-link-unmatched-classifier.md) — Add sidebar link to Unmatched Review.
    
-   Complete : [ ]
+   Complete : [X]
    
-   Related Commit : 
+   Related Commit : 7d6446330bba79c26ad57c1d7276102ac0e81eb1
    
    Summary: Link to `/unmatched` from the main chat sidebar for quick triage of classifier suggestions.
+   
+   Work Done: Added a sidebar button in `templates/chat.html` (Reports section) that navigates to `{{ request.url_for('view_unmatched') }}` in the same tab, matching existing sidebar button styling.
 
 5. [05-ui-ical-export-affordance.md](05-ui-ical-export-affordance.md) — Add iCal export button to Budget Health.
    
