@@ -7,3 +7,4 @@
 *.jpg
 .env.swp
 *.bk
+error_logging.txt
