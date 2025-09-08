@@ -347,16 +347,17 @@
         }
         ctx.stroke();
 
-        // Axis labels and ticks
+        // Axis labels and ticks (top = max, bottom = min)
         ctx.fillStyle = '#9ca3af';
         ctx.font = '12px system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Arial';
         ctx.textAlign = 'right';
         ctx.textBaseline = 'middle';
         for (let i = 0; i <= 4; i++) {
-          const yVal = minY + i * (yRange/4);
+          const yVal = maxY - i * (yRange/4);
           const yy = padT + i * (innerH/4);
-          const dollars = (yVal/100);
-          const yLabel = '$' + dollars.toLocaleString(undefined, {maximumFractionDigits: 0});
+          const dollars = yVal / 100;
+          const yAbs = Math.abs(dollars).toLocaleString(undefined, {maximumFractionDigits: 0});
+          const yLabel = dollars < 0 ? ('-$' + yAbs) : ('$' + yAbs);
           ctx.fillText(yLabel, padL - 6, yy);
         }
         // X labels (dates)
@@ -373,6 +374,15 @@
         ctx.strokeStyle = '#1f2937'; ctx.lineWidth = 1;
         ctx.beginPath(); ctx.moveTo(padL, padT); ctx.lineTo(padL, h - padB); ctx.stroke();
         ctx.beginPath(); ctx.moveTo(padL, h - padB); ctx.lineTo(w - padR, h - padB); ctx.stroke();
+
+        // Zero line to aid orientation when range crosses 0
+        if (minY < 0 && maxY > 0) {
+          const zy = yScale(0);
+          ctx.strokeStyle = '#334155'; // slate-700
+          ctx.setLineDash([2,2]);
+          ctx.beginPath(); ctx.moveTo(padL, zy); ctx.lineTo(w - padR, zy); ctx.stroke();
+          ctx.setLineDash([]);
+        }
 
         // Seam between history and forecast (vertical line at forecast start)
         const seamX = (series && series.length) ? series[0][0] : null;
