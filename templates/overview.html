@@ -4,6 +4,9 @@
     <meta charset="utf-8" />
     <title>Budget Buddy — Overview</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    {% if csrf_token %}
+    <meta name="csrf-token" content="{{ csrf_token }}">
+    {% endif %}
     <style>
       :root {
         --bg: #0f172a; /* slate-900 */
@@ -66,6 +69,26 @@
         <div id="spend-help" class="muted" style="margin-top:6px">Enter an integer number of cents. Results respect your buffer floor.</div>
         <div id="spend-result" aria-live="polite" style="margin-top:10px"></div>
       </div>
+
+      <div class="card" style="margin-top:12px" aria-labelledby="lbl-export">
+        <div id="lbl-export" class="label">Questionnaire Export</div>
+        <div class="row" style="gap:8px; align-items:center">
+          <div class="muted">Pack:</div>
+          <select id="q-pack" style="background:#0b1222; color:var(--text); border:1px solid #374151; border-radius:6px; padding:6px 8px">
+            <option value="loan_application_basics">Loan Application Basics</option>
+            <option value="affordability_snapshot">Affordability Snapshot</option>
+          </select>
+          <div class="muted">Format:</div>
+          <select id="q-format" style="background:#0b1222; color:var(--text); border:1px solid #374151; border-radius:6px; padding:6px 8px">
+            <option value="both">CSV + PDF</option>
+            <option value="csv">CSV only</option>
+            <option value="pdf">PDF only</option>
+          </select>
+          <button id="btn-export" type="button" style="background:#2563eb; color:white; border:none; border-radius:6px; padding:8px 12px; cursor:pointer">Export</button>
+        </div>
+        <div id="export-help" class="muted" style="margin-top:6px">Generates export files under <code>/exports</code>. Links will appear below.</div>
+        <div id="export-result" aria-live="polite" style="margin-top:10px"></div>
+      </div>
     </div>
     <script>
       function fmtCents(cents) {
@@ -105,6 +128,12 @@
         const meta = document.querySelector('meta[name="csrf-token"]');
         return meta ? { 'X-CSRF-Token': meta.getAttribute('content') } : {};
       }
+      function adminHeader() {
+        try {
+          const tok = localStorage.getItem('adminToken') || localStorage.getItem('admin_token');
+          return tok ? { 'X-Admin-Token': tok } : {};
+        } catch { return {}; }
+      }
       spendForm?.addEventListener('submit', async (e) => {
         e.preventDefault();
         const raw = (spendInput?.value || '').trim();
@@ -142,6 +171,36 @@
           spendResult.innerHTML = msg + (dec.notes ? `<div class="muted" style="margin-top:4px">${dec.notes}</div>` : '');
         } catch (err) {
           spendResult.textContent = String(err.message || err);
+        }
+      });
+
+      // Minimal Questionnaire Export wiring
+      const exportBtn = document.getElementById('btn-export');
+      const exportResult = document.getElementById('export-result');
+      exportBtn?.addEventListener('click', async () => {
+        exportResult.textContent = '';
+        const pack = (document.getElementById('q-pack')?.value || 'loan_application_basics');
+        const format = (document.getElementById('q-format')?.value || 'both');
+        const payload = { pack, period: '3m_full', format };
+        try {
+          const res = await fetch('{{ request.url_for("index") }}api/q/export'.replace(/\/$/, ''), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', ...csrfHeader(), ...adminHeader() },
+            body: JSON.stringify(payload),
+          });
+          if (!res.ok) {
+            const j = await res.json().catch(() => ({}));
+            throw new Error(j.detail || 'Export failed');
+          }
+          const out = await res.json();
+          const links = [];
+          if (out.csv_url) links.push(`<a href="${out.csv_url}" target="_blank" rel="noopener">CSV</a>`);
+          if (out.pdf_url) links.push(`<a href="${out.pdf_url}" target="_blank" rel="noopener">PDF</a>`);
+          const hash = out.hash ? `<div class="muted">Hash: ${out.hash}</div>` : '';
+          const ts = out.generated_at ? `<div class="muted">Generated: ${out.generated_at}</div>` : '';
+          exportResult.innerHTML = (links.length ? 'Download: ' + links.join(' · ') : 'No files generated') + hash + ts;
+        } catch (err) {
+          exportResult.textContent = String(err.message || err);
         }
       });
     </script>

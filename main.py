@@ -398,7 +398,8 @@ async def index(request: Request):
 
 @app.get("/overview", response_class=HTMLResponse)
 async def overview(request: Request):
-    return templates.TemplateResponse("overview.html", {"request": request})
+    csrf_token = os.getenv("CSRF_TOKEN") or None
+    return templates.TemplateResponse("overview.html", {"request": request, "csrf_token": csrf_token})
 
 @app.get("/budgets")
 def get_budget():
