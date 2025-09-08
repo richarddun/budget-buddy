@@ -132,7 +132,7 @@ def test_api_simulate_spend(tmp_path, monkeypatch):
             ("idem-2", 1, "2025-01-01T08:00:00Z", -5000, "seed", 1),
         )
 
-        # Seed calendar data to reproduce baseline min 4930 on 2025-01-05
+        # Seed calendar data to reproduce baseline min 3000 on 2025-01-05
         cur.execute(
             """
             INSERT INTO scheduled_inflows(name, amount_cents, due_rule, next_due_date, account_id, type)
@@ -164,11 +164,11 @@ def test_api_simulate_spend(tmp_path, monkeypatch):
     app = load_app()
     client = TestClient(app)
 
-    # Buffer floor just below baseline min (4930), margin = 30
+    # Buffer floor just below baseline min (3000), margin = 30
     payload = {
         "date": "2025-01-01",
         "amount_cents": 25,
-        "buffer_floor": 4900,
+        "buffer_floor": 2970,
         "mode": "deterministic",
         "horizon_days": 14,
     }
@@ -177,9 +177,9 @@ def test_api_simulate_spend(tmp_path, monkeypatch):
     data = resp.json()
 
     decision = data["decision"]
-    # With 25 spend, new min = 4930 - 25 = 4905 >= 4900 → safe
+    # With 25 spend, new min = 3000 - 25 = 2975 >= 2970 → safe
     assert decision["safe"] is True
-    assert decision["new_min_balance_cents"] == 4905
+    assert decision["new_min_balance_cents"] == 2975
     assert decision["max_safe_today_cents"] == 30  # margin to floor
 
     # Try unsafe amount 31
@@ -188,6 +188,6 @@ def test_api_simulate_spend(tmp_path, monkeypatch):
     assert resp2.status_code == 200
     d2 = resp2.json()["decision"]
     assert d2["safe"] is False
-    assert d2["new_min_balance_cents"] == 4930 - 31
+    assert d2["new_min_balance_cents"] == 2969
     assert d2["max_safe_today_cents"] == 30
 
