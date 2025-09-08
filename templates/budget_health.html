@@ -82,6 +82,7 @@
               <span><span class="swatch" style="background:#ef4444"></span>Below buffer</span>
               <span aria-label="Commitment marker">📄 Commitment</span>
               <span aria-label="Key event marker">🎂 Key event</span>
+              <span id="legend-empty-note" class="badge" style="display:none">No scheduled items in this horizon. Showing flat baseline.</span>
               <span id="legend-meta" class="badge"></span>
             </div>
           </div>
@@ -461,6 +462,7 @@
           const mode = (modeEl?.value || 'det');
           let series = downsample(balances);
           let band = null;
+          let usedFallback = false;
           if (mode === 'blend') {
             const urlB = new URL('{{ request.url_for("index") }}api/forecast/blended'.replace(/\/$/, ''));
             urlB.searchParams.set('start', start);
@@ -479,6 +481,16 @@
             }
           } else {
             document.getElementById('legend-band').style.display = 'none';
+          }
+
+          // Fallback: if no balances in horizon, synthesize flat baseline using opening balance
+          if ((!series || series.length === 0) && start && end) {
+            const open = fc.opening_balance_cents ?? 0;
+            series = [
+              [new Date(start).getTime(), open],
+              [new Date(end).getTime(), open],
+            ];
+            usedFallback = true;
           }
 
           // Prepare markers for commitments and key events
@@ -560,9 +572,11 @@
           newAlerts.forEach(a => seen.add(alertKey(a)));
           setSet(SEEN_KEY, seen);
 
-          // Legend meta
+          // Legend meta and empty-series hint
           const meta = document.getElementById('legend-meta');
           if (meta) meta.textContent = `${start} → ${end}`;
+          const note = document.getElementById('legend-empty-note');
+          if (note) note.style.display = usedFallback ? '' : 'none';
         } catch (e) {
           const alertBox = document.getElementById('alerts');
           const div = document.createElement('div'); div.className = 'alert'; div.textContent = 'Unable to load forecast/overview.'; alertBox.appendChild(div);
