@@ -20,6 +20,7 @@ from datetime import datetime
 from dotenv import load_dotenv
 from db.migrate import run_migrations
 load_dotenv()
+STAGING = os.getenv("STAGING", "false").lower() in ("1", "true", "yes")
 from config import BASE_PATH
 from jobs.daily_ingestion import scheduler_loop
 from jobs.backfill_payee_rules import backfill_from_ynab
@@ -192,6 +193,69 @@ def _connect_localdb() -> sqlite3.Connection:
     conn.row_factory = sqlite3.Row
     return conn
 
+
+def seed_staging_db():
+    """Populate localdb with dummy budget data when in STAGING mode."""
+    if not STAGING:
+        return
+    try:
+        client = ynab()
+        budget_id = os.getenv("YNAB_BUDGET_ID") or "dummy-budget-id"
+        details = client.get_budget_details(budget_id)
+        txns = client.get_transactions(budget_id)
+
+        with _connect_localdb() as conn:
+            # Insert accounts and capture internal IDs
+            acct_map = {}
+            for acct in details.get("accounts", []):
+                cur = conn.execute(
+                    "SELECT id FROM accounts WHERE name = ?",
+                    (acct.get("name"),),
+                )
+                row = cur.fetchone()
+                if row:
+                    acct_map[acct.get("id")] = int(row[0])
+                else:
+                    cur = conn.execute(
+                        "INSERT INTO accounts(name, type, currency, is_active) VALUES (?,?,?,1)",
+                        (
+                            acct.get("name"),
+                            acct.get("type", "checking"),
+                            details.get("currency_format", {}).get("iso_code", "USD"),
+                        ),
+                    )
+                    acct_map[acct.get("id")] = int(cur.lastrowid)
+
+            # Insert transactions
+            for txn in txns:
+                internal_id = acct_map.get(txn.get("account_id"))
+                if not internal_id:
+                    continue
+                amount_cents = int(round(txn.get("amount", 0) * 100))
+                conn.execute(
+                    """
+                    INSERT OR IGNORE INTO transactions(
+                        idempotency_key, account_id, posted_at, amount_cents, payee, memo,
+                        external_id, source, is_cleared
+                    ) VALUES (?,?,?,?,?,?,?,?,?)
+                    """,
+                    (
+                        txn.get("id"),
+                        internal_id,
+                        txn.get("date"),
+                        amount_cents,
+                        txn.get("payee_name"),
+                        txn.get("memo"),
+                        txn.get("id"),
+                        "staging",
+                        1,
+                    ),
+                )
+            conn.commit()
+        logger.info("[STAGING] Seeded localdb with dummy budget data")
+    except Exception as e:
+        logger.exception(f"[STAGING] Failed to seed database: {e}")
+
 def load_latest_snapshot_row():
     try:
         with _connect_localdb() as conn:
@@ -284,6 +348,7 @@ async def startup():
 
     # Initialize chat history DB used by the app
     init_db()
+    seed_staging_db()
     logger.info("[INIT] Budget Buddy (SSE) startup complete.")
     # Optionally start the daily ingestion scheduler
     enable = os.getenv("ENABLE_DAILY_INGESTION", "false").lower() in ("1", "true", "yes", "on")
