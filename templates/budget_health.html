@@ -298,7 +298,7 @@
         if (!id) { errBox.textContent = 'No ID'; return; }
         if (!confirm('Delete this key event?')) return;
         try {
-          const u = new URL('{{ request.url_for("index") }}api/key-events/'.replace(/\/$/, '') + encodeURIComponent(id));
+          const u = new URL('{{ request.url_for("index") }}api/key-events/'.replace(/\/$/, '') + '/' + encodeURIComponent(id));
           const res = await fetch(u.toString(), {
             method: 'DELETE',
             headers: { ...csrfHeader(), ...adminHeader() },
