@@ -148,12 +148,10 @@ def expand_calendar(start: date, end: date, *, db_path: Optional[Path] = None, a
 
     with _connect(dbp) as conn:
         # Inflows
-        inflow_sql = (
-            "SELECT id, name, amount_cents, due_rule, next_due_date FROM scheduled_inflows"
-            + (" WHERE account_id IN ({})".format(
-                ",".join([str(int(a)) for a in sorted(accounts)])
-            ) if accounts else ""
-        )
+        inflow_sql = "SELECT id, name, amount_cents, due_rule, next_due_date FROM scheduled_inflows"
+        if accounts:
+            ids = ",".join(str(int(a)) for a in sorted(accounts))
+            inflow_sql += f" WHERE account_id IN ({ids})"
         for row in conn.execute(inflow_sql):
             if not row["next_due_date"]:
                 continue
@@ -176,10 +174,10 @@ def expand_calendar(start: date, end: date, *, db_path: Optional[Path] = None, a
         # Commitments
         commit_sql = (
             "SELECT id, name, amount_cents, due_rule, next_due_date, flexible_window_days, account_id FROM commitments"
-            + (" WHERE account_id IN ({})".format(
-                ",".join([str(int(a)) for a in sorted(accounts)])
-            ) if accounts else ""
         )
+        if accounts:
+            ids = ",".join(str(int(a)) for a in sorted(accounts))
+            commit_sql += f" WHERE account_id IN ({ids})"
         for row in conn.execute(commit_sql):
             if not row["next_due_date"]:
                 continue
