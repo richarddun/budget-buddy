@@ -51,12 +51,14 @@ Use this checklist to track progress for today’s iteration. Update the checkbo
    Work Done: Added a "📅 Download .ics" button in `templates/budget_health.html` header. `loadUI()` now reads the horizon from `/api/overview` and sets the button href to `/api/calendar/ical?from=<start>&to=<end>` on every refresh; the link is shown once populated and triggers a file download.
 
 6. [06-ui-questionnaire-export-hook.md](06-ui-questionnaire-export-hook.md) — Minimal UI to trigger pack export.
+  
+   Complete : [X]
    
-   Complete : [ ]
-   
-   Related Commit : 
+   Related Commit : 157948ca2e88888356f9c704b2a96dbab272ed72
    
    Summary: Add a small action to POST to `/api/q/export` for a default pack and show links to generated files under `/exports`.
+   
+   Work Done: Added a “Questionnaire Export” section to `templates/overview.html` with a minimal control to select pack and format, then POST to `/api/q/export` (default `loan_application_basics`, period `3m_full`). On success, renders CSV/PDF links plus hash/timestamp. Reused CSRF and optional Admin headers; updated `main.py` to pass `csrf_token` to the overview template.
 
 7. [07-main-router-include-cleanup.md](07-main-router-include-cleanup.md) — Register routers outside startup.
    
