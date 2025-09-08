@@ -1,0 +1,85 @@
+Sep 08 12:04:33 evee uvicorn[64741]: Message: '192.168.0.85:0 - "GET /budget-buddy/ HTTP/1.1" 200'
+Sep 08 12:04:33 evee uvicorn[64741]: Arguments: ('192.168.0.85:0', 'GET', '/budget-buddy/', '1.1', 200)
+Sep 08 12:04:36 evee uvicorn[64741]: --- Logging error ---
+Sep 08 12:04:36 evee uvicorn[64741]: Traceback (most recent call last):
+Sep 08 12:04:36 evee uvicorn[64741]:   File "/usr/lib/python3.11/logging/__init__.py", line 1110, in emit
+Sep 08 12:04:36 evee uvicorn[64741]:     msg = self.format(record)
+Sep 08 12:04:36 evee uvicorn[64741]:           ^^^^^^^^^^^^^^^^^^^
+Sep 08 12:04:36 evee uvicorn[64741]:   File "/usr/lib/python3.11/logging/__init__.py", line 953, in format
+Sep 08 12:04:36 evee uvicorn[64741]:     return fmt.format(record)
+Sep 08 12:04:36 evee uvicorn[64741]:            ^^^^^^^^^^^^^^^^^^
+Sep 08 12:04:36 evee uvicorn[64741]:   File "/usr/lib/python3.11/logging/__init__.py", line 687, in format
+Sep 08 12:04:36 evee uvicorn[64741]:     record.message = record.getMessage()
+Sep 08 12:04:36 evee uvicorn[64741]:                      ^^^^^^^^^^^^^^^^^^^
+Sep 08 12:04:36 evee uvicorn[64741]:   File "/usr/lib/python3.11/logging/__init__.py", line 377, in getMessage
+Sep 08 12:04:36 evee uvicorn[64741]:     msg = msg % self.args
+Sep 08 12:04:36 evee uvicorn[64741]:           ~~~~^~~~~~~~~~~
+Sep 08 12:04:36 evee uvicorn[64741]: TypeError: not all arguments converted during string formatting
+Sep 08 12:04:36 evee uvicorn[64741]: Call stack:
+Sep 08 12:04:36 evee uvicorn[64741]:   File "/home/richard/servers/uvienv/bin/uvicorn", line 10, in <module>
+Sep 08 12:04:36 evee uvicorn[64741]:     sys.exit(main())
+Sep 08 12:04:36 evee uvicorn[64741]:   File "/home/richard/servers/uvienv/lib/python3.11/site-packages/click/core.py", line 1442, in __call__
+Sep 08 12:04:36 evee uvicorn[64741]:     return self.main(*args, **kwargs)
+Sep 08 12:04:36 evee uvicorn[64741]:   File "/home/richard/servers/uvienv/lib/python3.11/site-packages/click/core.py", line 1363, in main
+Sep 08 12:04:36 evee uvicorn[64741]:     rv = self.invoke(ctx)
+Sep 08 12:04:36 evee uvicorn[64741]:   File "/home/richard/servers/uvienv/lib/python3.11/site-packages/click/core.py", line 1226, in invoke
+Sep 08 12:04:36 evee uvicorn[64741]:     return ctx.invoke(self.callback, **ctx.params)
+Sep 08 12:04:36 evee uvicorn[64741]:   File "/home/richard/servers/uvienv/lib/python3.11/site-packages/click/core.py", line 794, in invoke
+Sep 08 12:04:36 evee uvicorn[64741]:     return callback(*args, **kwargs)
+Sep 08 12:04:36 evee uvicorn[64741]:   File "/home/richard/servers/uvienv/lib/python3.11/site-packages/uvicorn/main.py", line 413, in main
+Sep 08 12:04:36 evee uvicorn[64741]:     run(
+Sep 08 12:04:36 evee uvicorn[64741]:   File "/home/richard/servers/uvienv/lib/python3.11/site-packages/uvicorn/main.py", line 580, in run
+Sep 08 12:04:36 evee uvicorn[64741]:     server.run()
+Sep 08 12:04:36 evee uvicorn[64741]:   File "/home/richard/servers/uvienv/lib/python3.11/site-packages/uvicorn/server.py", line 67, in run
+Sep 08 12:04:36 evee uvicorn[64741]:     return asyncio.run(self.serve(sockets=sockets))
+Sep 08 12:04:36 evee uvicorn[64741]:   File "/usr/lib/python3.11/asyncio/runners.py", line 190, in run
+Sep 08 12:04:36 evee uvicorn[64741]:     return runner.run(main)
+Sep 08 12:04:36 evee uvicorn[64741]:   File "/usr/lib/python3.11/asyncio/runners.py", line 118, in run
+Sep 08 12:04:36 evee uvicorn[64741]:     return self._loop.run_until_complete(task)
+Sep 08 12:04:36 evee uvicorn[64741]:   File "/usr/lib/python3.11/asyncio/base_events.py", line 640, in run_until_complete
+Sep 08 12:04:36 evee uvicorn[64741]:     self.run_forever()
+Sep 08 12:04:36 evee uvicorn[64741]:   File "/usr/lib/python3.11/asyncio/base_events.py", line 607, in run_forever
+Sep 08 12:04:36 evee uvicorn[64741]:     self._run_once()
+Sep 08 12:04:36 evee uvicorn[64741]:   File "/usr/lib/python3.11/asyncio/base_events.py", line 1922, in _run_once
+Sep 08 12:04:36 evee uvicorn[64741]:     handle._run()
+Sep 08 12:04:36 evee uvicorn[64741]:   File "/usr/lib/python3.11/asyncio/events.py", line 80, in _run
+Sep 08 12:04:36 evee uvicorn[64741]:     self._context.run(self._callback, *self._args)
+Sep 08 12:04:36 evee uvicorn[64741]:   File "/home/richard/servers/uvienv/lib/python3.11/site-packages/uvicorn/protocols/http/h11_impl.py", line 403, in run_asgi
+Sep 08 12:04:36 evee uvicorn[64741]:     result = await app(  # type: ignore[func-returns-value]
+Sep 08 12:04:36 evee uvicorn[64741]:   File "/home/richard/servers/uvienv/lib/python3.11/site-packages/uvicorn/middleware/proxy_headers.py", line 60, in __call__
+Sep 08 12:04:36 evee uvicorn[64741]:     return await self.app(scope, receive, send)
+Sep 08 12:04:36 evee uvicorn[64741]:   File "/home/richard/servers/uvienv/lib/python3.11/site-packages/fastapi/applications.py", line 1054, in __call__
+Sep 08 12:04:36 evee uvicorn[64741]:     await super().__call__(scope, receive, send)
+Sep 08 12:04:36 evee uvicorn[64741]:   File "/home/richard/servers/uvienv/lib/python3.11/site-packages/starlette/applications.py", line 112, in __call__
+Sep 08 12:04:36 evee uvicorn[64741]:     await self.middleware_stack(scope, receive, send)
+Sep 08 12:04:36 evee uvicorn[64741]:   File "/home/richard/servers/uvienv/lib/python3.11/site-packages/starlette/middleware/errors.py", line 165, in __call__
+Sep 08 12:04:36 evee uvicorn[64741]:     await self.app(scope, receive, _send)
+Sep 08 12:04:36 evee uvicorn[64741]:   File "/home/richard/servers/uvienv/lib/python3.11/site-packages/starlette/middleware/exceptions.py", line 62, in __call__
+Sep 08 12:04:36 evee uvicorn[64741]:     await wrap_app_handling_exceptions(self.app, conn)(scope, receive, send)
+Sep 08 12:04:36 evee uvicorn[64741]:   File "/home/richard/servers/uvienv/lib/python3.11/site-packages/starlette/_exception_handler.py", line 42, in wrapped_app
+Sep 08 12:04:36 evee uvicorn[64741]:     await app(scope, receive, sender)
+Sep 08 12:04:36 evee uvicorn[64741]:   File "/home/richard/servers/uvienv/lib/python3.11/site-packages/starlette/routing.py", line 714, in __call__
+Sep 08 12:04:36 evee uvicorn[64741]:     await self.middleware_stack(scope, receive, send)
+Sep 08 12:04:36 evee uvicorn[64741]:   File "/home/richard/servers/uvienv/lib/python3.11/site-packages/starlette/routing.py", line 734, in app
+Sep 08 12:04:36 evee uvicorn[64741]:     await route.handle(scope, receive, send)
+Sep 08 12:04:36 evee uvicorn[64741]:   File "/home/richard/servers/uvienv/lib/python3.11/site-packages/starlette/routing.py", line 288, in handle
+Sep 08 12:04:36 evee uvicorn[64741]:     await self.app(scope, receive, send)
+Sep 08 12:04:36 evee uvicorn[64741]:   File "/home/richard/servers/uvienv/lib/python3.11/site-packages/starlette/routing.py", line 76, in app
+Sep 08 12:04:36 evee uvicorn[64741]:     await wrap_app_handling_exceptions(app, request)(scope, receive, send)
+Sep 08 12:04:36 evee uvicorn[64741]:   File "/home/richard/servers/uvienv/lib/python3.11/site-packages/starlette/_exception_handler.py", line 42, in wrapped_app
+Sep 08 12:04:36 evee uvicorn[64741]:     await app(scope, receive, sender)
+Sep 08 12:04:36 evee uvicorn[64741]:   File "/home/richard/servers/uvienv/lib/python3.11/site-packages/starlette/routing.py", line 74, in app
+Sep 08 12:04:36 evee uvicorn[64741]:     await response(scope, receive, send)
+Sep 08 12:04:36 evee uvicorn[64741]:   File "/home/richard/servers/uvienv/lib/python3.11/site-packages/starlette/templating.py", line 56, in __call__
+Sep 08 12:04:36 evee uvicorn[64741]:     await super().__call__(scope, receive, send)
+Sep 08 12:04:36 evee uvicorn[64741]:   File "/home/richard/servers/uvienv/lib/python3.11/site-packages/starlette/responses.py", line 150, in __call__
+Sep 08 12:04:36 evee uvicorn[64741]:     await send(
+Sep 08 12:04:36 evee uvicorn[64741]:   File "/home/richard/servers/uvienv/lib/python3.11/site-packages/starlette/_exception_handler.py", line 39, in sender
+Sep 08 12:04:36 evee uvicorn[64741]:     await send(message)
+Sep 08 12:04:36 evee uvicorn[64741]:   File "/home/richard/servers/uvienv/lib/python3.11/site-packages/starlette/_exception_handler.py", line 39, in sender
+Sep 08 12:04:36 evee uvicorn[64741]:     await send(message)
+Sep 08 12:04:36 evee uvicorn[64741]:   File "/home/richard/servers/uvienv/lib/python3.11/site-packages/starlette/middleware/errors.py", line 162, in _send
+Sep 08 12:04:36 evee uvicorn[64741]:     await send(message)
+Sep 08 12:04:36 evee uvicorn[64741]:   File "/home/richard/servers/uvienv/lib/python3.11/site-packages/uvicorn/protocols/http/h11_impl.py", line 473, in send
+Sep 08 12:04:36 evee uvicorn[64741]:     self.access_logger.info(
+
