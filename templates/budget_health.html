@@ -78,7 +78,7 @@
               <span id="legend-band" class="badge" style="display:none">Blended band</span>
             </div>
             <div class="chart-wrap" aria-labelledby="lbl-runway" aria-live="polite">
-              <canvas id="runway-canvas" role="img" aria-label="Runway chart showing forecasted balances with markers"></canvas>
+              <canvas id="runway-canvas" role="img" aria-label="Runway chart showing forecasted balances with markers and axes"></canvas>
               <div id="markers" class="markers-layer" aria-hidden="false"></div>
             </div>
             <div class="legend" aria-label="Chart legend">
@@ -87,11 +87,11 @@
               <span aria-label="Commitment marker">📄 Commitment</span>
               <span aria-label="Key event marker">🎂 Key event</span>
               <span id="legend-empty-note" class="badge" style="display:none">No scheduled items in this horizon. Showing flat baseline.</span>
-              <span id="legend-meta" class="badge"></span>
+              <span id="legend-meta" class="badge" aria-live="polite"></span>
             </div>
           </div>
           <div>
-            <h2 class="section-title">Upcoming (next 14–30 days)</h2>
+            <h2 id="upcoming-title" class="section-title">Upcoming</h2>
             <ul id="upcoming-list" class="list" role="list" aria-live="polite"></ul>
           </div>
         </div>
@@ -310,7 +310,7 @@
         }
         if (minY === maxY) { maxY += 1; minY -= 1; }
 
-        const padL = 30, padR = 10, padT = 16, padB = 24;
+        const padL = 44, padR = 10, padT = 16, padB = 34;
         const innerW = w - padL - padR;
         const innerH = h - padT - padB;
         const x0 = series[0][0], x1 = series[series.length-1][0];
@@ -327,6 +327,33 @@
           ctx.moveTo(padL, yy); ctx.lineTo(w - padR, yy);
         }
         ctx.stroke();
+
+        // Axis labels and ticks
+        ctx.fillStyle = '#9ca3af';
+        ctx.font = '12px system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Arial';
+        ctx.textAlign = 'right';
+        ctx.textBaseline = 'middle';
+        for (let i = 0; i <= 4; i++) {
+          const yVal = minY + i * (yRange/4);
+          const yy = padT + i * (innerH/4);
+          const dollars = (yVal/100);
+          const yLabel = '$' + dollars.toLocaleString(undefined, {maximumFractionDigits: 0});
+          ctx.fillText(yLabel, padL - 6, yy);
+        }
+        // X labels (dates)
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'top';
+        for (let i = 0; i <= 4; i++) {
+          const xVal = x0 + i * (xRange/4);
+          const xx = xScale(xVal);
+          const d = new Date(xVal);
+          const xLabel = d.toLocaleDateString(undefined, {month:'short', day:'numeric'});
+          ctx.fillText(xLabel, xx, h - padB + 8);
+        }
+        // Draw axis lines
+        ctx.strokeStyle = '#1f2937'; ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.moveTo(padL, padT); ctx.lineTo(padL, h - padB); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(padL, h - padB); ctx.lineTo(w - padR, h - padB); ctx.stroke();
 
         // Threshold line
         if (threshold !== null && threshold !== undefined) {
@@ -604,6 +631,8 @@
           // Legend meta and empty-series hint
           const meta = document.getElementById('legend-meta');
           if (meta) meta.textContent = `${start} → ${end}`;
+          const upTitle = document.getElementById('upcoming-title');
+          if (upTitle) upTitle.textContent = 'Upcoming (next 14 days)';
           const note = document.getElementById('legend-empty-note');
           if (note) note.style.display = usedFallback ? '' : 'none';
         } catch (e) {
