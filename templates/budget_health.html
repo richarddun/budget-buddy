@@ -638,6 +638,13 @@
                 const fh = await resH.json();
                 const hbal = Object.entries(fh.balances || {}).map(([d, b]) => [new Date(d).getTime(), b]).sort((a,b) => a[0]-b[0]);
                 histSeries = downsample(hbal);
+                if ((!histSeries || histSeries.length === 0) && fh.opening_balance_cents !== undefined) {
+                  // Synthesize flat history at opening balance when no entries
+                  histSeries = [
+                    [histStart.getTime(), fh.opening_balance_cents],
+                    [histEnd.getTime(), fh.opening_balance_cents],
+                  ];
+                }
               }
             }
           } catch {}
