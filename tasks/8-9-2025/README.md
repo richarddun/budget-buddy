@@ -14,11 +14,11 @@ Use this checklist to track progress for today’s iteration. Update the checkbo
 
 2. [02-chat-digest-system-message-preload.md](02-chat-digest-system-message-preload.md) — Insert daily digest as first chat message.
    
-   Complete : [ ]
+   Complete : [X]
    
-   Related Commit : 
+   Related Commit : 2e676bfdc1913d828abbfc0067a895cc7245bdc7
    
-   Summary: On landing, if a digest exists and hasn’t been stored today, upsert a `[system] Daily Digest (YYYY-MM-DD)` message into `messages` so history/SSE are consistent. Avoid duplicates per day.
+   Summary: Implemented idempotent preload of a `[system] Daily Digest (YYYY-MM-DD)` message on index load when a digest is available. The index route now computes the latest digest and upserts a single system message per day before rendering history. Added compact HTML summary (balances, safe-to-spend, next cliff, min balance, top commitments). Styled system messages in `templates/messages.html` with a muted “system” badge and subtle text color.
 
 3. [03-key-events-csrf-admin-wiring.md](03-key-events-csrf-admin-wiring.md) — CSRF/Admin headers for Key Events modal.
    
