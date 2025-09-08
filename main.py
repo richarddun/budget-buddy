@@ -99,6 +99,10 @@ try:
 except Exception:
     classify_router = None
 try:
+    from api.accounts import router as accounts_router
+except Exception:
+    accounts_router = None
+try:
     from api.calendar_export import router as calendar_export_router
 except Exception:
     calendar_export_router = None
@@ -118,6 +122,8 @@ if classify_router is not None:
     app.include_router(classify_router)
 if calendar_export_router is not None:
     app.include_router(calendar_export_router)
+if accounts_router is not None:
+    app.include_router(accounts_router)
 
 # --- File upload Setup ---
 UPLOAD_DIR = Path("uploaded_receipts")

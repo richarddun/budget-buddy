@@ -79,6 +79,7 @@ def _ledger_daily_deltas(conn: sqlite3.Connection, start: date, end: date) -> di
 def get_forecast_history(
     start: str = Query(..., description="Start date YYYY-MM-DD"),
     end: str = Query(..., description="End date YYYY-MM-DD"),
+    accounts: str | None = Query(None, description="Comma-separated account IDs to include"),
 ):
     """Return ledger-based daily balances between start and end (inclusive).
 
@@ -98,7 +99,31 @@ def get_forecast_history(
     opening = compute_opening_balance_cents(as_of=opening_as_of, db_path=dbp)
 
     with _connect(dbp) as conn:
-        deltas = _ledger_daily_deltas(conn, start_d, end_d)
+        deltas = _ledger_daily_deltas(conn, start_d, end_d) if not accounts else _ledger_daily_deltas(conn, start_d, end_d)  # placeholder
+        acc_set = _parse_accounts_param(accounts)
+        if acc_set:
+            # Re-run with filtering
+            qmarks = ",".join(["?"] * len(acc_set))
+            rows = conn.execute(
+                f"""
+                SELECT DATE(t.posted_at) AS d, COALESCE(SUM(t.amount_cents), 0) AS delta
+                FROM transactions t
+                JOIN accounts a ON a.id = t.account_id
+                WHERE a.is_active = 1 AND t.is_cleared = 1
+                  AND a.id IN ({qmarks})
+                  AND DATE(t.posted_at) >= ? AND DATE(t.posted_at) <= ?
+                GROUP BY DATE(t.posted_at)
+                ORDER BY DATE(t.posted_at)
+                """,
+                (*[int(x) for x in sorted(acc_set)], start_d.isoformat(), end_d.isoformat()),
+            ).fetchall()
+            deltas = {}
+            for r in rows:
+                try:
+                    d0 = date.fromisoformat(str(r[0]))
+                    deltas[d0] = int(r[1] or 0)
+                except Exception:
+                    continue
 
     # Walk days and build balances
     balances: dict[date, int] = {}
@@ -207,11 +232,27 @@ def compute_opening_balance_cents(as_of: Optional[date] = None, *, db_path: Opti
         return int(row["bal"] if row and row["bal"] is not None else 0)
 
 
+def _parse_accounts_param(val: str | None) -> set[int] | None:
+    if not val:
+        return None
+    out: set[int] = set()
+    for part in val.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        try:
+            out.add(int(part))
+        except Exception:
+            continue
+    return out or None
+
+
 @router.get("/api/forecast/calendar")
 def get_forecast_calendar(
     start: str = Query(..., description="Start date YYYY-MM-DD"),
     end: str = Query(..., description="End date YYYY-MM-DD"),
     buffer_floor: int = Query(0, description="Buffer floor in cents"),
+    accounts: str | None = Query(None, description="Comma-separated account IDs to include"),
 ):
     # Validate dates
     try:
@@ -228,7 +269,8 @@ def get_forecast_calendar(
     opening_balance = compute_opening_balance_cents(as_of=opening_as_of, db_path=dbp)
 
     # Expand entries and compute balances
-    entries = expand_calendar(start_d, end_d, db_path=dbp)
+    accounts_set = _parse_accounts_param(accounts)
+    entries = expand_calendar(start_d, end_d, db_path=dbp, accounts=accounts_set)
     balances = compute_balances(opening_balance, entries)
 
     # Compute min balance and date deterministically

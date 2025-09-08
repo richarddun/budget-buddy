@@ -5,7 +5,7 @@ import sqlite3
 from dataclasses import dataclass
 from datetime import date, timedelta
 from pathlib import Path
-from typing import Iterable, List, Literal, Optional, Tuple
+from typing import Iterable, List, Literal, Optional, Tuple, Set
 
 
 ShiftPolicy = Literal["AS_SCHEDULED", "PREV_BUSINESS_DAY", "NEXT_BUSINESS_DAY"]
@@ -132,7 +132,7 @@ def _connect(db_path: Path) -> sqlite3.Connection:
     return conn
 
 
-def expand_calendar(start: date, end: date, *, db_path: Optional[Path] = None) -> List[Entry]:
+def expand_calendar(start: date, end: date, *, db_path: Optional[Path] = None, accounts: Optional[Set[int]] = None) -> List[Entry]:
     """Expand known scheduled items to dated entries between start and end (inclusive).
 
     Sources:
@@ -148,12 +148,13 @@ def expand_calendar(start: date, end: date, *, db_path: Optional[Path] = None) -
 
     with _connect(dbp) as conn:
         # Inflows
-        for row in conn.execute(
-            """
-            SELECT id, name, amount_cents, due_rule, next_due_date
-            FROM scheduled_inflows
-            """
-        ):
+        inflow_sql = (
+            "SELECT id, name, amount_cents, due_rule, next_due_date FROM scheduled_inflows"
+            + (" WHERE account_id IN ({})".format(
+                ",".join([str(int(a)) for a in sorted(accounts)])
+            ) if accounts else ""
+        )
+        for row in conn.execute(inflow_sql):
             if not row["next_due_date"]:
                 continue
             start_from = date.fromisoformat(row["next_due_date"])  # seed
@@ -173,12 +174,13 @@ def expand_calendar(start: date, end: date, *, db_path: Optional[Path] = None) -
                 )
 
         # Commitments
-        for row in conn.execute(
-            """
-            SELECT id, name, amount_cents, due_rule, next_due_date, flexible_window_days
-            FROM commitments
-            """
-        ):
+        commit_sql = (
+            "SELECT id, name, amount_cents, due_rule, next_due_date, flexible_window_days, account_id FROM commitments"
+            + (" WHERE account_id IN ({})".format(
+                ",".join([str(int(a)) for a in sorted(accounts)])
+            ) if accounts else ""
+        )
+        for row in conn.execute(commit_sql):
             if not row["next_due_date"]:
                 continue
             start_from = date.fromisoformat(row["next_due_date"])  # seed
@@ -200,12 +202,15 @@ def expand_calendar(start: date, end: date, *, db_path: Optional[Path] = None) -
                 )
 
         # Key spend events
-        for row in conn.execute(
-            """
-            SELECT id, name, event_date, repeat_rule, planned_amount_cents, shift_policy
-            FROM key_spend_events
-            """
-        ):
+        key_sql = (
+            "SELECT id, name, event_date, repeat_rule, planned_amount_cents, shift_policy, account_id FROM key_spend_events"
+        )
+        # Filter: include events with NULL account_id (global) or in selected accounts
+        if accounts:
+            key_sql += " WHERE (account_id IS NULL OR account_id IN ({}))".format(
+                ",".join([str(int(a)) for a in sorted(accounts)])
+            )
+        for row in conn.execute(key_sql):
             if not row["event_date"]:
                 continue
             start_from = date.fromisoformat(row["event_date"])  # seed
@@ -272,4 +277,3 @@ def compute_balances(opening_balance_cents: int, entries: Iterable[Entry]) -> di
         running = flush_day(current_day, delta_for_day, running)
 
     return balances
-
