@@ -269,10 +269,11 @@ def get_forecast_calendar(
     # Opening balance as of the day before the start of horizon
     opening_as_of = start_d - timedelta(days=1)
     dbp = _default_db_path()
+    accounts_set = _parse_accounts_param(accounts)
+
     opening_balance = compute_opening_balance_cents(as_of=opening_as_of, db_path=dbp, accounts=accounts_set)
 
     # Expand entries and compute balances
-    accounts_set = _parse_accounts_param(accounts)
     entries = expand_calendar(start_d, end_d, db_path=dbp, accounts=accounts_set)
     balances = compute_balances(opening_balance, entries)
 
