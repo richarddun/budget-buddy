@@ -642,9 +642,22 @@
 
           // Build time series from balances (sorted by date)
           const entries = fc.entries || [];
-          const balances = Object.entries(fc.balances || {}).map(([d, b]) => [new Date(d).getTime(), b]).sort((a,b) => a[0]-b[0]);
+          let balances = Object.entries(fc.balances || {}).map(([d, b]) => [new Date(d).getTime(), b]).sort((a,b) => a[0]-b[0]);
           const modeEl = document.getElementById('forecast-mode');
           const mode = (modeEl?.value || 'det');
+          // Pad series to exactly span [start, end] so empty tails don't shrink the chart
+          const startTS = start ? new Date(start).getTime() : null;
+          const endTS = end ? new Date(end).getTime() : null;
+          if (balances.length > 0) {
+            const first = balances[0][0];
+            const last = balances[balances.length-1][0];
+            if (startTS !== null && first > startTS) {
+              balances = [[startTS, fc.opening_balance_cents ?? balances[0][1]], ...balances];
+            }
+            if (endTS !== null && last < endTS) {
+              balances = [...balances, [endTS, balances[balances.length-1][1]]];
+            }
+          }
           let series = downsample(balances);
           let band = null;
           let usedFallback = false;
@@ -662,7 +675,14 @@
             if (resB.ok) {
               const bj = await resB.json();
               const blend = bj.baseline_blended || {};
-              series = downsample(Object.entries(blend).sort().map(([d,v]) => [new Date(d).getTime(), v]));
+              let s = Object.entries(blend).sort().map(([d,v]) => [new Date(d).getTime(), v]);
+              if (s.length > 0) {
+                const first = s[0][0];
+                const last = s[s.length-1][0];
+                if (startTS !== null && first > startTS) s = [[startTS, s[0][1]], ...s];
+                if (endTS !== null && last < endTS) s = [...s, [endTS, s[s.length-1][1]]];
+              }
+              series = downsample(s);
               const lower = Object.entries((bj.bands||{}).lower || {}).sort().map(([d,v]) => [new Date(d).getTime(), v]);
               const upper = Object.entries((bj.bands||{}).upper || {}).sort().map(([d,v]) => [new Date(d).getTime(), v]);
               band = { lower: downsample(lower), upper: downsample(upper) };
@@ -685,9 +705,15 @@
             usedFallback = true;
           }
 
-          // Prepare markers for commitments and key events
+          // Prepare markers for commitments and key events, limited to horizon
           const markers = entries
-            .filter(e => e.type === 'commitment' || e.type === 'key_event')
+            .filter(e => (e.type === 'commitment' || e.type === 'key_event'))
+            .filter(e => {
+              try {
+                const t = new Date(e.date).getTime();
+                return (startTS === null || t >= startTS) && (endTS === null || t <= endTS);
+              } catch { return true; }
+            })
             .map(e => ({
               x: new Date(e.date).getTime(),
               y: (fc.balances || {})[e.date] ?? fc.opening_balance_cents,
