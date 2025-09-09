@@ -97,10 +97,11 @@ def get_forecast_history(
 
     dbp = _default_db_path()
     opening_as_of = start_d - timedelta(days=1)
-    opening = compute_opening_balance_cents(as_of=opening_as_of, db_path=dbp)
+    acc_set = _parse_accounts_param(accounts)
+    opening = compute_opening_balance_cents(as_of=opening_as_of, db_path=dbp, accounts=acc_set)
 
     with _connect(dbp) as conn:
-        deltas = _ledger_daily_deltas(conn, start_d, end_d) if not accounts else _ledger_daily_deltas(conn, start_d, end_d)  # placeholder
+        deltas = _ledger_daily_deltas(conn, start_d, end_d) if not accounts else _ledger_daily_deltas(conn, start_d, end_d)
         acc_set = _parse_accounts_param(accounts)
         if acc_set:
             # Re-run with filtering
@@ -201,7 +202,12 @@ def _ui_marker(entry: Entry) -> Optional[str]:
     return None
 
 
-def compute_opening_balance_cents(as_of: Optional[date] = None, *, db_path: Optional[Path] = None) -> int:
+def compute_opening_balance_cents(
+    as_of: Optional[date] = None,
+    *,
+    db_path: Optional[Path] = None,
+    accounts: Optional[set[int]] = None,
+) -> int:
     """Compute opening balance as sum of cleared transactions across active accounts.
 
     If `as_of` is provided, only include transactions with posted_at on or before that date.
@@ -209,26 +215,22 @@ def compute_opening_balance_cents(as_of: Optional[date] = None, *, db_path: Opti
     """
     dbp = db_path or _default_db_path()
     with _connect(dbp) as conn:
-        if as_of is None:
-            cur = conn.execute(
-                """
-                SELECT COALESCE(SUM(t.amount_cents), 0) AS bal
-                FROM transactions t
-                JOIN accounts a ON a.id = t.account_id
-                WHERE a.is_active = 1 AND t.is_cleared = 1
-                """
-            )
-        else:
-            cur = conn.execute(
-                """
-                SELECT COALESCE(SUM(t.amount_cents), 0) AS bal
-                FROM transactions t
-                JOIN accounts a ON a.id = t.account_id
-                WHERE a.is_active = 1 AND t.is_cleared = 1
-                  AND DATE(t.posted_at) <= ?
-                """,
-                (as_of.isoformat(),),
-            )
+        base = [
+            "SELECT COALESCE(SUM(t.amount_cents), 0) AS bal",
+            "FROM transactions t",
+            "JOIN accounts a ON a.id = t.account_id",
+            "WHERE a.is_active = 1 AND t.is_cleared = 1",
+        ]
+        params: list = []
+        if as_of is not None:
+            base.append("AND DATE(t.posted_at) <= ?")
+            params.append(as_of.isoformat())
+        if accounts:
+            qmarks = ",".join(["?"] * len(accounts))
+            base.append(f"AND a.id IN ({qmarks})")
+            params.extend(int(x) for x in sorted(accounts))
+        sql = "\n".join(base)
+        cur = conn.execute(sql, params)
         row = cur.fetchone()
         return int(row["bal"] if row and row["bal"] is not None else 0)
 
@@ -267,7 +269,7 @@ def get_forecast_calendar(
     # Opening balance as of the day before the start of horizon
     opening_as_of = start_d - timedelta(days=1)
     dbp = _default_db_path()
-    opening_balance = compute_opening_balance_cents(as_of=opening_as_of, db_path=dbp)
+    opening_balance = compute_opening_balance_cents(as_of=opening_as_of, db_path=dbp, accounts=accounts_set)
 
     # Expand entries and compute balances
     accounts_set = _parse_accounts_param(accounts)
