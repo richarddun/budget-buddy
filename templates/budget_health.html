@@ -59,6 +59,7 @@
       <div class="header">
         <h1 style="margin:0">📊 Budget Health</h1>
         <div style="display:flex; gap:8px; align-items:center">
+          <a id="btn-admin" href="{{ request.url_for('index') }}admin" style="display:none; padding:8px 12px; border-radius:6px; background:#f59e0b; color:#06142b; font-weight:600; text-decoration:none">⚙️ Admin</a>
           <a id="btn-ical" href="#" download style="display:none; padding:8px 12px; border-radius:6px; background:#3b82f6; color:#06142b; font-weight:600; text-decoration:none">📅 Download .ics</a>
           <button id="btn-add-key-event" type="button" style="padding:8px 12px; border-radius:6px; background:#10b981; color:#031b17; font-weight:600; border:none; cursor:pointer">＋ Key Event</button>
           <a class="back" href="{{ request.url_for('index') }}">← Back to Chat</a>
@@ -892,6 +893,8 @@
 
       // Kick off and start polling for updates
       loadUI();
+      // Show Admin button when a token is present locally
+      try { if (localStorage.getItem('adminToken') || localStorage.getItem('admin_token')) { const btn = document.getElementById('btn-admin'); if (btn) btn.style.display=''; } } catch {}
       if (pollTimer) clearInterval(pollTimer);
       pollTimer = setInterval(() => { loadUI(true); }, 30000);
       // Redraw on resize for crisp canvas

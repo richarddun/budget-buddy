@@ -1,0 +1,154 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Admin Settings</title>
+    {% if csrf_token %}<meta name="csrf-token" content="{{ csrf_token }}">{% endif %}
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <style>
+      body { margin:0; font-family: system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, 'Helvetica Neue', Arial; background:#0f172a; color:#e5e7eb; }
+      .container { max-width: 1000px; margin: 0 auto; padding: 20px; }
+      .header { display:flex; justify-content:space-between; align-items:center; margin-bottom: 12px; }
+      .back { display:inline-block; padding:8px 12px; border-radius:6px; background:#3b82f6; color:#06142b; text-decoration:none; font-weight:600; }
+      .panel { background:#111827; border-radius:10px; padding:16px; margin-bottom:16px; border:1px solid #1f2937; }
+      .section-title { font-size:16px; font-weight:700; margin:0 0 10px 0; }
+      table { width:100%; border-collapse: collapse; }
+      th, td { border-bottom:1px solid #1f2937; padding:8px; text-align:left; }
+      input, select { background:#0b1222; color:#e5e7eb; border:1px solid #374151; border-radius:6px; padding:6px 8px; }
+      button { background:#2563eb; color:#fff; border:none; border-radius:6px; padding:8px 12px; cursor:pointer; }
+      .muted { color:#9ca3af; font-size:12px; }
+      .row-actions { display:flex; gap:8px; align-items:center; }
+      .ok { color:#86efac; }
+      .err { color:#fecaca; }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <div class="header">
+        <h1 style="margin:0">⚙️ Admin Settings</h1>
+        <a class="back" href="{{ request.url_for('index') }}">← Back to Chat</a>
+      </div>
+
+      <div class="panel">
+        <div class="section-title">Authentication</div>
+        <div class="muted">Writes require an admin token when configured. Store it locally for requests sent from this page.</div>
+        <div style="display:flex; gap:8px; align-items:center; margin-top:8px">
+          <label>Admin token <input id="admin-token" style="min-width:360px" placeholder="paste token" /></label>
+          <button id="save-admin-token" type="button">Save</button>
+          <span id="admin-token-status" class="muted"></span>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="section-title">Account Anchors & Overdraft Floors</div>
+        <div class="muted">Set a ground-truth balance and an optional floor (e.g., -75000 for -€750.00). Opening balances are derived from the anchor + cleared deltas.</div>
+        <table id="tbl-anchors">
+          <thead>
+            <tr>
+              <th style="width:160px">Account</th>
+              <th style="width:140px">Anchor date</th>
+              <th style="width:180px">Anchor balance (cents)</th>
+              <th style="width:160px">Min floor (cents)</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+        <div id="anchors-status" class="muted" style="margin-top:8px"></div>
+      </div>
+    </div>
+
+    <script>
+      const CSRF = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content');
+      function csrfHeader() { return CSRF ? { 'X-CSRF-Token': CSRF } : {}; }
+      function adminHeader() {
+        try { const tok = localStorage.getItem('adminToken') || localStorage.getItem('admin_token'); return tok ? { 'X-Admin-Token': tok } : {}; } catch { return {}; }
+      }
+
+      // Admin token storage
+      (function initAdminToken() {
+        const inp = document.getElementById('admin-token');
+        const btn = document.getElementById('save-admin-token');
+        const status = document.getElementById('admin-token-status');
+        try { inp.value = localStorage.getItem('adminToken') || ''; } catch {}
+        btn.addEventListener('click', () => {
+          try { localStorage.setItem('adminToken', inp.value || ''); status.textContent = 'Saved'; status.className='ok'; setTimeout(()=>status.textContent='',1500);} catch { status.textContent = 'Unable to store'; status.className='err'; }
+        });
+      })();
+
+      async function fetchJSON(url) {
+        const r = await fetch(url);
+        if (!r.ok) throw new Error('HTTP '+r.status);
+        return r.json();
+      }
+
+      function fmtCents(c) { const s = c<0?'-':''; const a=Math.abs(c); return s + ({{ currency_symbol|tojson|safe }} || '€') + (a/100).toFixed(2); }
+
+      async function loadAnchors() {
+        const base = '{{ request.url_for("index") }}'.replace(/\/$/, '');
+        const [accs, anchors] = await Promise.all([
+          fetchJSON(base + '/api/accounts'),
+          fetchJSON(base + '/api/accounts/anchors'),
+        ]);
+        const byId = {}; (anchors.anchors||[]).forEach(a => { byId[a.account_id] = a; });
+        const tbody = document.querySelector('#tbl-anchors tbody');
+        tbody.innerHTML = '';
+        (accs.accounts||[]).forEach(acc => {
+          const a = byId[acc.id] || { anchor_date: '', anchor_balance_cents: '', min_floor_cents: '' };
+          const tr = document.createElement('tr');
+          tr.innerHTML = `
+            <td>${acc.name}</td>
+            <td><input type="date" value="${a.anchor_date||''}" data-field="anchor_date"></td>
+            <td><input type="number" step="1" value="${a.anchor_balance_cents!==undefined?a.anchor_balance_cents:''}" data-field="anchor_balance_cents"></td>
+            <td><input type="number" step="1" value="${(a.min_floor_cents!==undefined && a.min_floor_cents!==null)?a.min_floor_cents:''}" data-field="min_floor_cents"></td>
+            <td class="row-actions">
+              <button type="button" data-action="save">Save</button>
+              <span class="muted" data-role="status"></span>
+            </td>
+          `;
+          tr.dataset.accountId = String(acc.id);
+          tbody.appendChild(tr);
+        });
+      }
+
+      async function saveRow(tr) {
+        const id = tr.dataset.accountId;
+        const status = tr.querySelector('[data-role="status"]');
+        const inputs = tr.querySelectorAll('input');
+        const payload = {};
+        inputs.forEach(inp => {
+          const k = inp.getAttribute('data-field');
+          let v = inp.value;
+          if (k.endsWith('_cents') && v !== '') v = Number(v);
+          payload[k] = (v === '' ? null : v);
+        });
+        if (!payload.anchor_date || payload.anchor_balance_cents === null) {
+          status.textContent = 'anchor_date and balance required'; status.className='err'; return;
+        }
+        const base = '{{ request.url_for("index") }}'.replace(/\/$/, '');
+        try {
+          const r = await fetch(base + '/api/accounts/' + encodeURIComponent(id) + '/anchor', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json', ...csrfHeader(), ...adminHeader() },
+            body: JSON.stringify(payload),
+          });
+          if (!r.ok) { const j = await r.json().catch(()=>({})); throw new Error(j.detail || 'Error'); }
+          status.textContent = 'Saved'; status.className='ok';
+        } catch (e) {
+          status.textContent = 'Error saving'; status.className='err';
+        }
+      }
+
+      document.addEventListener('click', (e) => {
+        const el = e.target;
+        if (el && el.getAttribute && el.getAttribute('data-action') === 'save') {
+          const tr = el.closest('tr');
+          if (tr) saveRow(tr);
+        }
+      });
+
+      (async () => { try { await loadAnchors(); } catch { document.getElementById('anchors-status').textContent = 'Failed to load'; } })();
+    </script>
+  </body>
+  </html>
+
