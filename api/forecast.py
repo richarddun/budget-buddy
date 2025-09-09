@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import asdict
 from datetime import date, datetime, timedelta
 from pathlib import Path
-from typing import Optional, List
+from typing import Optional, List, Iterable
 
 import sqlite3
 from fastapi import APIRouter, HTTPException, Query, Request
@@ -30,6 +30,45 @@ def _connect(db_path: Path) -> sqlite3.Connection:
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     return conn
+
+
+def _sum_cleared_between(conn: sqlite3.Connection, account_id: int, start_d: Optional[date], end_d: Optional[date]) -> int:
+    """Sum cleared transactions for account between dates (DATE inclusive).
+
+    - If start_d is None: sum up to end_d.
+    - If end_d is None: sum from start_d onward.
+    - Otherwise: sum where DATE(posted_at) >= start_d and <= end_d.
+    """
+    base = [
+        "SELECT COALESCE(SUM(t.amount_cents), 0) AS s",
+        "FROM transactions t JOIN accounts a ON a.id = t.account_id",
+        "WHERE a.is_active = 1 AND t.is_cleared = 1 AND a.id = ?",
+    ]
+    params: list = [int(account_id)]
+    if start_d is not None:
+        base.append("AND DATE(t.posted_at) >= ?")
+        params.append(start_d.isoformat())
+    if end_d is not None:
+        base.append("AND DATE(t.posted_at) <= ?")
+        params.append(end_d.isoformat())
+    sql = "\n".join(base)
+    row = conn.execute(sql, params).fetchone()
+    return int(row["s"] if row and row["s"] is not None else 0)
+
+
+def _load_anchor(conn: sqlite3.Connection, account_id: int) -> Optional[dict]:
+    row = conn.execute(
+        "SELECT account_id, anchor_date, anchor_balance_cents, min_floor_cents FROM account_anchors WHERE account_id = ?",
+        (int(account_id),),
+    ).fetchone()
+    if not row:
+        return None
+    return {
+        "account_id": int(row["account_id"]),
+        "anchor_date": date.fromisoformat(str(row["anchor_date"])),
+        "anchor_balance_cents": int(row["anchor_balance_cents"]),
+        "min_floor_cents": int(row["min_floor_cents"]) if row["min_floor_cents"] is not None else None,
+    }
 
 
 def _tz_name() -> str:
@@ -215,6 +254,31 @@ def compute_opening_balance_cents(
     """
     dbp = db_path or _default_db_path()
     with _connect(dbp) as conn:
+        # If specific accounts requested, honor per-account anchors and sum results
+        if accounts:
+            total = 0
+            for acc in sorted(accounts):
+                anchor = _load_anchor(conn, int(acc))
+                if anchor is None:
+                    # Fallback: sum cleared up to as_of for this account
+                    total += _sum_cleared_between(conn, int(acc), None, as_of)
+                else:
+                    ad = anchor["anchor_date"]
+                    bal0 = anchor["anchor_balance_cents"]
+                    if as_of is None or as_of == ad:
+                        total += bal0
+                    elif as_of > ad:
+                        delta = _sum_cleared_between(conn, int(acc), ad + timedelta(days=0), as_of)
+                        # We used >= anchor_date; avoid double-counting on same day by starting after anchor?
+                        # Using strictly greater: start at ad + 1 day
+                        delta = _sum_cleared_between(conn, int(acc), ad + timedelta(days=1), as_of)
+                        total += bal0 + delta
+                    else:  # as_of < anchor_date, walk backward
+                        delta = _sum_cleared_between(conn, int(acc), as_of + timedelta(days=1), ad)
+                        total += bal0 - delta
+            return int(total)
+
+        # Aggregate path (no account filter): fall back to original cleared-sum
         base = [
             "SELECT COALESCE(SUM(t.amount_cents), 0) AS bal",
             "FROM transactions t",
@@ -225,10 +289,6 @@ def compute_opening_balance_cents(
         if as_of is not None:
             base.append("AND DATE(t.posted_at) <= ?")
             params.append(as_of.isoformat())
-        if accounts:
-            qmarks = ",".join(["?"] * len(accounts))
-            base.append(f"AND a.id IN ({qmarks})")
-            params.extend(int(x) for x in sorted(accounts))
         sql = "\n".join(base)
         cur = conn.execute(sql, params)
         row = cur.fetchone()
@@ -368,7 +428,7 @@ def get_forecast_calendar_debug(
 
     dbp = _default_db_path()
     opening_as_of = start_d - timedelta(days=1)
-    opening_balance = compute_opening_balance_cents(as_of=opening_as_of, db_path=dbp)
+    opening_balance = compute_opening_balance_cents(as_of=opening_as_of, db_path=dbp, accounts=acc_set)
 
     acc_set = _parse_accounts_param(accounts)
     entries = expand_calendar(start_d, end_d, db_path=dbp, accounts=acc_set)
