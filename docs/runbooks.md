@@ -6,6 +6,20 @@ This document provides concise, operator-focused runbooks for common Budget Budd
 - Default DB: `localdb/budget.db` (override with `--db PATH`)
 - Environment: `.env` should provide `YNAB_TOKEN` and `YNAB_BUDGET_ID`
 
+## Admin Auth & CSRF
+
+Provision admin tokens for write-protected endpoints and UI pages.
+
+- Generate tokens:
+  - `python3 -c "import secrets; print(secrets.token_urlsafe(32))"`
+- Configure `.env` and restart app:
+  - `ADMIN_TOKEN=<generated>`
+  - `CSRF_TOKEN=<generated>`
+- Client headers used by the app and admin UI:
+  - `X-Admin-Token: $ADMIN_TOKEN`
+  - `X-CSRF-Token: $CSRF_TOKEN`
+- Admin UI page: `GET /admin` — paste your admin token (stored in browser localStorage) and edit anchors/floors.
+
 ## Ingestion
 
 Prerequisites
@@ -64,6 +78,25 @@ Compare to latest forecast snapshot (manual inspection)
 - View the overview digest (derived from latest snapshot) via API/UI:
   - Open `/overview` in the running app, or `GET /api/overview`.
 
+### Forecast Debug & Ledger Export (Diagnostics)
+
+Explain what drives the runway and cross‑check the ledger.
+
+- Forecast calendar debug (read‑only):
+  - `GET {BASE}/api/forecast/calendar/debug?start=YYYY-MM-DD&end=YYYY-MM-DD[&accounts=1,2]`
+  - Returns opening balance as of `start-1`, expanded entries, and day‑by‑day rows with opening → delta → closing breakdown.
+- Transactions export (read‑only, admin):
+  - `GET {BASE}/api/transactions/export?from=YYYY-MM-DD&end=YYYY-MM-DD[&accounts=1,2][&include_uncleared=false][&limit=5000][&offset=0]`
+  - Returns `transactions[]` with account/category names and cleared flags.
+- Accounts helper: `GET {BASE}/api/accounts`
+
+Quick example:
+
+```
+curl -s "https://your.host{BASE}/api/forecast/calendar/debug?start=2025-08-01&end=2025-08-31&accounts=1" | jq '.rows[] | select(.date=="2025-08-25")'
+curl -s -H "X-Admin-Token: $ADMIN_TOKEN" "https://your.host{BASE}/api/transactions/export?from=2025-08-20&end=2025-08-26&accounts=1" | jq '[.transactions[].amount_cents] | add'
+```
+
 ## Exports (Questionnaire Packs)
 
 Endpoint: `POST /api/q/export` (requires admin auth + CSRF)
@@ -90,3 +123,38 @@ Integrity verification
 - The FastAPI app statically serves exports from `/exports` and receipts from `/receipts`.
 - Configure `BUFFER_FLOOR_CENTS` to influence safe-to-spend calculations in digests.
 - The daily ingestion scheduler can be enabled via `.env` (see repository README).
+
+---
+
+# Account Anchors & Overdraft Floors
+
+Anchors provide a ground‑truth balance per account and an optional overdraft reconciliation floor. Forecast openings are derived from anchors + cleared transaction deltas.
+
+Schema
+- Table: `account_anchors(account_id PK, anchor_date TEXT, anchor_balance_cents INTEGER, min_floor_cents INTEGER NULL)`
+- Migration: applied automatically (`db/migrations/0002_account_anchors.sql`).
+
+APIs
+- List anchors: `GET {BASE}/api/accounts/anchors`
+- Upsert anchor: `PUT {BASE}/api/accounts/{id}/anchor` (admin + CSRF)
+  - Body: `{ "anchor_date": "YYYY-MM-DD", "anchor_balance_cents": 200000, "min_floor_cents": -75000 }`
+- Optional env fallback for floors: `OVERDRAFT_ALERT_THRESHOLDS="1:-77500,2:-60000"`
+  - Inspect: `GET {BASE}/api/accounts/floors`
+
+Forecast behavior
+- With account filter, opening(as_of) per account:
+  - If `as_of >= anchor_date`: `anchor_balance + sum(cleared (anchor_date+1 .. as_of])`
+  - If `as_of < anchor_date`: `anchor_balance - sum(cleared (as_of+1 .. anchor_date])`
+- Without anchors: falls back to sum of cleared ≤ `as_of`.
+
+UI integration
+- Admin UI `/admin` lets you edit anchors and floors.
+- Budget Health uses `min_floor_cents` (or env mapping) to raise a critical alert when the projection dips below the floor (no clamping).
+
+Example
+
+```
+curl -s -X PUT "https://your.host{BASE}/api/accounts/1/anchor" \
+  -H "Content-Type: application/json" -H "X-Admin-Token: $ADMIN_TOKEN" -H "X-CSRF-Token: $CSRF_TOKEN" \
+  -d '{"anchor_date":"2025-09-10","anchor_balance_cents":200000,"min_floor_cents":-75000}' | jq
+```

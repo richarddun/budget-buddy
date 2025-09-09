@@ -475,6 +475,12 @@ async def overview(request: Request):
     csrf_token = os.getenv("CSRF_TOKEN") or None
     return templates.TemplateResponse("overview.html", {"request": request, "csrf_token": csrf_token})
 
+@app.get("/admin", response_class=HTMLResponse)
+async def admin_settings(request: Request):
+    """Lightweight admin settings page for configurable features (anchors, floors)."""
+    csrf_token = os.getenv("CSRF_TOKEN") or None
+    return templates.TemplateResponse("admin.html", {"request": request, "csrf_token": csrf_token, "currency_symbol": CURRENCY_SYMBOL})
+
 @app.get("/budgets")
 def get_budget():
     buddy = ynab()
