@@ -594,6 +594,23 @@
             }
           } catch {}
 
+          // Load overdraft thresholds from anchors (preferred) and env mapping (fallback)
+          let acctThresholds = {};
+          try {
+            const rA = await fetch('{{ request.url_for("index") }}api/accounts/anchors'.replace(/\/$/, ''));
+            if (rA.ok) {
+              const ja = await rA.json();
+              (ja.anchors || []).forEach(a => { if (a.min_floor_cents !== null && a.min_floor_cents !== undefined) acctThresholds[a.account_id] = a.min_floor_cents; });
+            }
+          } catch {}
+          try {
+            const rT = await fetch('{{ request.url_for("index") }}api/accounts/floors'.replace(/\/$/, ''));
+            if (rT.ok) {
+              const jt = await rT.json();
+              acctThresholds = { ...jt.thresholds, ...acctThresholds };
+            }
+          } catch {}
+
           // Load overview for horizon + buffer
           const resOv = await fetch('{{ request.url_for("index") }}api/overview'.replace(/\/$/, ''));
           const ov = await resOv.json();
@@ -812,6 +829,21 @@
               if (t >= today && bal < buffer) { alerts.push({type:'warning', message: `Projected balance below buffer on ${d}`, detail: fmtCents(bal)}); break; }
             }
           }
+          // Overdraft reconciliation alert: when projected balance goes below per-account threshold
+          try {
+            const sel = document.getElementById('acct-filter');
+            const v = sel?.value || 'all';
+            if (v !== 'all') {
+              const th = Number(acctThresholds[v]);
+              if (!Number.isNaN(th)) {
+                const sorted = Object.keys(fc.balances || {}).sort();
+                for (const d of sorted) {
+                  const bal = fc.balances[d];
+                  if (bal < th) { alerts.push({type:'critical', message: 'Balance reconciliation needed', detail: `Projected ${fmtCents(bal)} on ${d} < floor ${fmtCents(th)}`}); break; }
+                }
+              }
+            }
+          } catch {}
           // Very low safe-to-spend today
           if ((ov.safe_to_spend_today_cents ?? 0) < Math.max(5000, buffer * 0.1)) {
             alerts.push({type:'warning', message: 'Low safe-to-spend today', detail: fmtCents(ov.safe_to_spend_today_cents)});
