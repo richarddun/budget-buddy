@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Optional, List
 
 import sqlite3
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi import Body
 import json
 
@@ -20,6 +20,7 @@ from config import (
 )
 from config import SALARY_DOM, SALARY_MIN_CENTS
 import random
+from security.deps import require_auth
 
 
 router = APIRouter()
@@ -332,6 +333,163 @@ def get_forecast_calendar(
         },
     }
     return resp
+
+
+@router.get("/api/forecast/calendar/debug")
+def get_forecast_calendar_debug(
+    request: Request,
+    start: str = Query(..., description="Start date YYYY-MM-DD"),
+    end: str = Query(..., description="End date YYYY-MM-DD"),
+    accounts: str | None = Query(None, description="Comma-separated account IDs to include"),
+):
+    """Explain the deterministic calendar computation day-by-day for diagnostics.
+
+    Returns opening balance as of start-1, all expanded entries, and a per-day
+    breakdown with opening→delta→closing and the items contributing to delta.
+    Protected by admin token when configured.
+    """
+    # Auth (no-op if ADMIN_TOKEN not set)
+    try:
+        require_auth(request)
+    except Exception:
+        # Keep consistent error behavior
+        raise
+
+    try:
+        start_d = date.fromisoformat(start)
+        end_d = date.fromisoformat(end)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid date format; use YYYY-MM-DD")
+    if end_d < start_d:
+        raise HTTPException(status_code=400, detail="end must be on or after start")
+
+    dbp = _default_db_path()
+    opening_as_of = start_d - timedelta(days=1)
+    opening_balance = compute_opening_balance_cents(as_of=opening_as_of, db_path=dbp)
+
+    acc_set = _parse_accounts_param(accounts)
+    entries = expand_calendar(start_d, end_d, db_path=dbp, accounts=acc_set)
+    balances = compute_balances(opening_balance, entries)
+
+    # Group entries by date
+    by_day: dict[date, list[dict]] = {}
+    for e in entries:
+        by_day.setdefault(e.date, []).append(
+            {
+                "type": e.type,
+                "name": e.name,
+                "amount_cents": e.amount_cents,
+                "source_id": e.source_id,
+                "shift_applied": e.shift_applied,
+                "policy": e.policy,
+            }
+        )
+
+    # Walk horizon days deterministically
+    rows: list[dict] = []
+    running = opening_balance
+    d = start_d
+    while d <= end_d:
+        items = by_day.get(d, [])
+        delta = sum(int(it["amount_cents"]) for it in items) if items else 0
+        closing = balances.get(d, running + delta)
+        rows.append(
+            {
+                "date": d.isoformat(),
+                "opening_balance_cents": running,
+                "delta_cents": delta,
+                "closing_balance_cents": closing,
+                "items": items,
+            }
+        )
+        running = closing
+        d = d + timedelta(days=1)
+
+    return {
+        "opening_balance_cents": opening_balance,
+        "balances": {d.isoformat(): b for d, b in balances.items()},
+        "rows": rows,
+        "entries": [
+            {
+                "date": e.date.isoformat(),
+                "type": e.type,
+                "name": e.name,
+                "amount_cents": e.amount_cents,
+                "source_id": e.source_id,
+                "shift_applied": e.shift_applied,
+                "policy": e.policy,
+            }
+            for e in entries
+        ],
+        "meta": {"db_path": str(dbp), "accounts": sorted(list(acc_set)) if acc_set else None},
+    }
+
+
+@router.get("/api/transactions/export")
+def export_transactions(
+    request: Request,
+    start: str = Query(..., alias="from", description="Start date YYYY-MM-DD"),
+    end: str = Query(..., description="End date YYYY-MM-DD"),
+    accounts: str | None = Query(None, description="Comma-separated account IDs"),
+    include_uncleared: bool = Query(False, description="Include uncleared transactions"),
+    limit: int = Query(5000, ge=1, le=100000),
+    offset: int = Query(0, ge=0),
+):
+    """Export transactions in a date window for diagnostics.
+
+    Protected by admin token when configured. Returns JSON rows with account and
+    category names when available.
+    """
+    require_auth(request)
+    try:
+        start_d = date.fromisoformat(start)
+        end_d = date.fromisoformat(end)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid date format; use YYYY-MM-DD")
+    if end_d < start_d:
+        raise HTTPException(status_code=400, detail="end must be on or after start")
+
+    acc_set = _parse_accounts_param(accounts)
+    q = [
+        "SELECT t.posted_at, t.amount_cents, t.payee, t.memo, t.account_id, a.name AS account_name,",
+        "       t.category_id, c.name AS category_name, t.is_cleared, t.source, t.external_id",
+        "FROM transactions t",
+        "LEFT JOIN accounts a ON a.id = t.account_id",
+        "LEFT JOIN categories c ON c.id = t.category_id",
+        "WHERE DATE(t.posted_at) >= ? AND DATE(t.posted_at) <= ?",
+    ]
+    params: list = [start_d.isoformat(), end_d.isoformat()]
+    if not include_uncleared:
+        q.append("AND t.is_cleared = 1")
+    if acc_set:
+        q.append(f"AND t.account_id IN ({','.join(['?']*len(acc_set))})")
+        params.extend(int(x) for x in sorted(acc_set))
+    q.append("ORDER BY DATE(t.posted_at) ASC, t.idempotency_key ASC")
+    q.append("LIMIT ? OFFSET ?")
+    params.extend([int(limit), int(offset)])
+
+    dbp = _default_db_path()
+    rows_out: list[dict] = []
+    with _connect(dbp) as conn:
+        cur = conn.execute("\n".join(q), params)
+        for r in cur:
+            rows_out.append(
+                {
+                    "posted_at": r["posted_at"],
+                    "amount_cents": int(r["amount_cents"]),
+                    "payee": r["payee"],
+                    "memo": r["memo"],
+                    "account_id": int(r["account_id"]) if r["account_id"] is not None else None,
+                    "account_name": r["account_name"],
+                    "category_id": int(r["category_id"]) if r["category_id"] is not None else None,
+                    "category_name": r["category_name"],
+                    "is_cleared": bool(r["is_cleared"]),
+                    "source": r["source"],
+                    "external_id": r["external_id"],
+                }
+            )
+
+    return {"transactions": rows_out, "count": len(rows_out), "db_path": str(dbp)}
 
 
 def _load_transactions_for_stats(db_path: Path, window_days: int = 180) -> list[dict]:
