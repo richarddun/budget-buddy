@@ -8,6 +8,7 @@
 .env.swp
 *.bk
 error_logging.txt
-*.venv
-*.sqlite
+.venv*
+*.pdf.html
 affordability*
+*.sqlite
