@@ -19,7 +19,12 @@ import json
 from datetime import datetime
 from dotenv import load_dotenv
 from db.migrate import run_migrations
-load_dotenv()
+# Avoid repopulating .env during tests that monkeypatch env vars
+try:
+    if 'PYTEST_CURRENT_TEST' not in os.environ:
+        load_dotenv()
+except Exception:
+    pass
 STAGING = os.getenv("STAGING", "false").lower() in ("1", "true", "yes")
 from config import BASE_PATH, CURRENCY_SYMBOL
 from jobs.daily_ingestion import scheduler_loop

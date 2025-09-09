@@ -90,6 +90,13 @@
                 <option value="90">3 months</option>
                 <option value="180">6 months</option>
               </select>
+              <!-- Balance reconciliation: quick anchor for selected account -->
+              <span class="muted" style="margin-left:10px">Reconcile</span>
+              <input id="reconcile-amount" type="text" inputmode="decimal" placeholder="e.g. 1234.56" aria-label="Actual balance amount"
+                     style="width:120px; background:#0b1222; color:var(--text); border:1px solid #374151; border-radius:6px; padding:4px 8px" />
+              <button id="reconcile-save" type="button" title="Set today's anchor for selected account"
+                      style="padding:6px 10px; border-radius:6px; background:#2563eb; color:white; border:none; cursor:pointer">Save</button>
+              <span id="reconcile-status" class="muted" aria-live="polite"></span>
               <span id="legend-band" class="badge" style="display:none">Blended band</span>
             </div>
             <div class="chart-wrap" aria-labelledby="lbl-runway" aria-live="polite">
@@ -236,6 +243,19 @@
           const tok = localStorage.getItem('adminToken') || localStorage.getItem('admin_token');
           return tok ? { 'X-Admin-Token': tok } : {};
         } catch { return {}; }
+      }
+
+      function isoToday() {
+        const d = new Date(); d.setHours(0,0,0,0);
+        return new Date(d.getTime()-d.getTimezoneOffset()*60000).toISOString().slice(0,10);
+      }
+
+      function parseMoneyToCents(str) {
+        if (!str) return NaN;
+        const s = String(str).trim().replace(/[^0-9.,-]/g,'').replace(/,(?=\d{3}\b)/g,'');
+        const n = Number(s.replace(',', '.'));
+        if (Number.isNaN(n)) return NaN;
+        return Math.round(n * 100);
       }
 
       // Cached fetch of key events for quick edit/delete prefill
@@ -590,7 +610,16 @@
                 sel.addEventListener('change', () => {
                   localStorage.setItem('acct_filter', sel.value);
                   loadUI();
+                  // Toggle reconcile UI
+                  const dis = (sel.value === 'all');
+                  document.getElementById('reconcile-amount').disabled = dis;
+                  document.getElementById('reconcile-save').disabled = dis;
+                  document.getElementById('reconcile-status').textContent = '';
                 });
+                // Initialize reconcile UI disabled state
+                const dis0 = (sel.value === 'all');
+                document.getElementById('reconcile-amount').disabled = dis0;
+                document.getElementById('reconcile-save').disabled = dis0;
               }
             }
           } catch {}
@@ -893,6 +922,35 @@
 
       // Kick off and start polling for updates
       loadUI();
+      // Reconcile click wiring
+      const recBtn = document.getElementById('reconcile-save');
+      recBtn?.addEventListener('click', async () => {
+        const sel = document.getElementById('acct-filter');
+        const amtEl = document.getElementById('reconcile-amount');
+        const status = document.getElementById('reconcile-status');
+        status.textContent = '';
+        if (!sel || sel.value === 'all') { status.textContent = 'Select an account'; return; }
+        const cents = parseMoneyToCents(amtEl.value);
+        if (!Number.isFinite(cents)) { status.textContent = 'Enter a valid amount'; return; }
+        const id = sel.value;
+        const base = '{{ request.url_for("index") }}'.replace(/\/$/, '');
+        try {
+          const r = await fetch(base + '/api/accounts/' + encodeURIComponent(id) + '/reconcile', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', ...csrfHeader(), ...adminHeader() },
+            body: JSON.stringify({ actual_balance_cents: cents, as_of: isoToday() }),
+          });
+          if (!r.ok) {
+            const j = await r.json().catch(()=>({}));
+            throw new Error(j.detail || 'Error');
+          }
+          status.textContent = 'Saved';
+          // Refresh to reflect new opening balance
+          loadUI();
+        } catch(e) {
+          status.textContent = 'Error saving';
+        }
+      });
       // Show Admin button when a token is present locally
       try { if (localStorage.getItem('adminToken') || localStorage.getItem('admin_token')) { const btn = document.getElementById('btn-admin'); if (btn) btn.style.display=''; } } catch {}
       if (pollTimer) clearInterval(pollTimer);

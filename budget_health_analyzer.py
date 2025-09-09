@@ -600,8 +600,7 @@ class BudgetHealthAnalyzer:
                 .table {{ width: 100%; border-collapse: collapse; margin-top: 10px; }}
                 .table th, .table td {{ text-align: left; padding: 8px; border-bottom: 1px solid #ddd; }}
                 .table th {{ background-color: #f8f9fa; }}
-                .progress-bar {{ background: #ddd; border-radius: 4px; height: 20px; overflow: hidden; margin: 5px 0; }}
-                .progress {{ height: 100%; background: #4CAF50; transition: width 0.3s ease; }}
+                /* Progress visuals removed per updated report scope */
                 .alert {{ padding: 15px; margin: 10px 0; border-radius: 4px; }}
                 .alert-danger {{ background-color: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }}
                 .alert-warning {{ background-color: #fff3cd; color: #856404; border: 1px solid #ffeaa7; }}
@@ -638,13 +637,9 @@ class BudgetHealthAnalyzer:
                 </div>
 
                 <div class="grid">
-                    <!-- Budget Overview -->
+                    <!-- Budget Overview (trimmed) -->
                     <div class="card">
                         <h3>📊 Budget Overview</h3>
-                        <div class="metric">
-                            <span>Total Budgeted:</span>
-                            <span class="metric-value">€{metrics.total_budgeted:,.2f}</span>
-                        </div>
                         <div class="metric">
                             <span>Total Spent:</span>
                             <span class="metric-value negative">€{metrics.total_spent:,.2f}</span>
@@ -652,9 +647,6 @@ class BudgetHealthAnalyzer:
                         <div class="metric">
                             <span>Remaining:</span>
                             <span class="metric-value {'positive' if metrics.total_remaining >= 0 else 'negative'}">€{metrics.total_remaining:,.2f}</span>
-                        </div>
-                        <div class="progress-bar">
-                            <div class="progress" style="width: {min(100, (metrics.total_spent / metrics.total_budgeted * 100) if metrics.total_budgeted > 0 else 0):.1f}%"></div>
                         </div>
                     </div>
 
@@ -699,45 +691,9 @@ class BudgetHealthAnalyzer:
                     </div>
         """
 
-        # Add overspent categories alert if any
-        if metrics.overspent_categories:
-            html += f"""
-                    <!-- Overspent Categories Alert -->
-                    <div class="card">
-                        <h3>⚠️ Overspent Categories</h3>
-                        <div class="alert alert-danger">
-                            <strong>Warning:</strong> {len(metrics.overspent_categories)} categories are overspent!
-                        </div>
-                        <table class="table">
-                            <thead>
-                                <tr><th>Category</th><th>Budgeted</th><th>Spent</th><th>Overspent</th></tr>
-                            </thead>
-                            <tbody>
-                                {self._generate_overspent_rows(metrics.overspent_categories[:5])}
-                            </tbody>
-                        </table>
-                    </div>
-            """
+        # Overspent Categories section removed per product direction
 
-        # Add underfunded goals if any
-        if metrics.underfunded_goals:
-            html += f"""
-                    <!-- Underfunded Goals -->
-                    <div class="card">
-                        <h3>🎯 Underfunded Goals</h3>
-                        <div class="alert alert-warning">
-                            <strong>Notice:</strong> {len(metrics.underfunded_goals)} goals need funding.
-                        </div>
-                        <table class="table">
-                            <thead>
-                                <tr><th>Category</th><th>Target</th><th>Need</th><th>Progress</th></tr>
-                            </thead>
-                            <tbody>
-                                {self._generate_underfunded_rows(metrics.underfunded_goals[:5])}
-                            </tbody>
-                        </table>
-                    </div>
-            """
+        # Underfunded Goals section removed per product direction
 
         # Add top spending categories
         if metrics.top_spending_categories:

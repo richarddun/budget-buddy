@@ -6,6 +6,7 @@ from fastapi import APIRouter, HTTPException, Request
 from security.deps import require_auth, require_csrf, rate_limit
 import os
 from forecast.calendar import _default_db_path
+from datetime import date as _date
 
 router = APIRouter()
 
@@ -142,5 +143,71 @@ async def upsert_account_anchor(account_id: int, request: Request):
         "anchor_date": ad_raw,
         "anchor_balance_cents": bal,
         "min_floor_cents": mfc_int,
+        "status": "ok",
+    }
+
+
+@router.post("/api/accounts/{account_id}/reconcile")
+async def reconcile_account_balance(account_id: int, request: Request):
+    """Reconcile an account's balance by upserting today's anchor.
+
+    Body fields:
+    - actual_balance_cents (int, required)
+    - as_of (YYYY-MM-DD, optional; defaults to today in server TZ)
+    """
+    require_auth(request)
+    require_csrf(request)
+    rate_limit(request, scope="anchors-write")
+    try:
+        payload = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON body")
+
+    try:
+        bal = int(payload.get("actual_balance_cents"))
+    except Exception:
+        raise HTTPException(status_code=400, detail="'actual_balance_cents' must be integer cents")
+
+    as_of_raw = (payload.get("as_of") or "").strip()
+    if as_of_raw:
+        try:
+            as_of = _date.fromisoformat(as_of_raw)
+        except Exception:
+            raise HTTPException(status_code=400, detail="'as_of' must be YYYY-MM-DD if provided")
+    else:
+        # Use local/tz-agnostic date; consistent with server date storage
+        as_of = _date.today()
+        as_of_raw = as_of.isoformat()
+
+    dbp = _default_db_path()
+    with _connect(dbp) as conn:
+        # Ensure account exists
+        row = conn.execute("SELECT 1 FROM accounts WHERE id=?", (account_id,)).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Account not found")
+        # Preserve existing min_floor_cents if present
+        row2 = conn.execute(
+            "SELECT min_floor_cents FROM account_anchors WHERE account_id=?",
+            (account_id,),
+        ).fetchone()
+        mfc_val = int(row2["min_floor_cents"]) if row2 and row2["min_floor_cents"] is not None else None
+        conn.execute(
+            """
+            INSERT INTO account_anchors(account_id, anchor_date, anchor_balance_cents, min_floor_cents)
+            VALUES(?,?,?,?)
+            ON CONFLICT(account_id) DO UPDATE SET
+                anchor_date=excluded.anchor_date,
+                anchor_balance_cents=excluded.anchor_balance_cents,
+                min_floor_cents=COALESCE(excluded.min_floor_cents, account_anchors.min_floor_cents)
+            """,
+            (account_id, as_of_raw, bal, mfc_val),
+        )
+        conn.commit()
+
+    return {
+        "account_id": int(account_id),
+        "anchor_date": as_of_raw,
+        "anchor_balance_cents": int(bal),
+        "min_floor_cents": mfc_val,
         "status": "ok",
     }
