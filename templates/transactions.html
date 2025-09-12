@@ -1,0 +1,143 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Transactions</title>
+    {% if csrf_token %}<meta name="csrf-token" content="{{ csrf_token }}">{% endif %}
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <style>
+      body { margin:0; font-family: system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, 'Helvetica Neue', Arial; background:#0f172a; color:#e5e7eb; }
+      .container { max-width: 1100px; margin: 0 auto; padding: 20px; }
+      .header { display:flex; justify-content:space-between; align-items:center; margin-bottom: 12px; }
+      .back { display:inline-block; padding:8px 12px; border-radius:6px; background:#3b82f6; color:#06142b; text-decoration:none; font-weight:600; }
+      .panel { background:#111827; border-radius:10px; padding:16px; margin-bottom:16px; border:1px solid #1f2937; }
+      .section-title { font-size:16px; font-weight:700; margin:0 0 10px 0; }
+      input, select { background:#0b1222; color:#e5e7eb; border:1px solid #374151; border-radius:6px; padding:6px 8px; }
+      table { width:100%; border-collapse:collapse; }
+      th, td { border-bottom:1px solid #1f2937; padding:8px; text-align:left; }
+      .muted { color:#9ca3af; font-size:12px; }
+      .neg { color:#fecaca; }
+      .pos { color:#86efac; }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <div class="header">
+        <h1 style="margin:0">🧾 Transactions</h1>
+        <a class="back" href="{{ request.url_for('index') }}">← Back to Chat</a>
+      </div>
+
+      <div class="panel">
+        <div class="section-title">Filters</div>
+        <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap">
+          <label>Start <input id="f-start" type="date"></label>
+          <label>End <input id="f-end" type="date"></label>
+          <label>Account
+            <select id="f-acct">
+              <option value="">All</option>
+            </select>
+          </label>
+          <label>Cleared
+            <select id="f-cleared">
+              <option value="all">All</option>
+              <option value="1">Cleared</option>
+              <option value="0">Uncleared</option>
+            </select>
+          </label>
+          <label>Search <input id="f-q" placeholder="payee or memo"></label>
+          <button id="btn-apply" type="button" style="background:#2563eb; color:#fff; border:none; border-radius:6px; padding:8px 12px; cursor:pointer">Apply</button>
+          <span id="meta" class="muted"></span>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="section-title">Results</div>
+        <div style="overflow:auto">
+          <table id="tbl">
+            <thead>
+              <tr>
+                <th style="width:150px">Date</th>
+                <th style="width:180px">Account</th>
+                <th>Payee</th>
+                <th>Memo</th>
+                <th style="width:120px">Amount</th>
+                <th style="width:90px">Cleared</th>
+                <th style="width:160px">Source</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      function fmtCents(c) { const s = c<0?'-':''; const a=Math.abs(c); return s + ({{ currency_symbol|tojson|safe }} || '€') + (a/100).toFixed(2); }
+      function iso(d) { return new Date(d.getTime()-d.getTimezoneOffset()*60000).toISOString().slice(0,10); }
+      async function fetchJSON(u) { const r = await fetch(u); if (!r.ok) throw new Error('HTTP '+r.status); return r.json(); }
+
+      async function loadAccounts() {
+        const base = '{{ request.url_for("index") }}'.replace(/\/$/, '');
+        const j = await fetchJSON(base + '/api/accounts');
+        const sel = document.getElementById('f-acct');
+        (j.accounts||[]).forEach(a => {
+          const o = document.createElement('option'); o.value = String(a.id); o.textContent = a.name; sel.appendChild(o);
+        });
+      }
+
+      function buildURL() {
+        const base = '{{ request.url_for("index") }}'.replace(/\/$/, '');
+        const u = new URL(base + '/api/transactions');
+        const s = document.getElementById('f-start').value; if (s) u.searchParams.set('start', s);
+        const e = document.getElementById('f-end').value; if (e) u.searchParams.set('end', e);
+        const a = document.getElementById('f-acct').value; if (a) u.searchParams.set('accounts', a);
+        const c = document.getElementById('f-cleared').value; if (c && c !== 'all') u.searchParams.set('cleared', c);
+        const q = document.getElementById('f-q').value.trim(); if (q) u.searchParams.set('q', q);
+        u.searchParams.set('limit', '500');
+        return u.toString();
+      }
+
+      function render(items, total) {
+        const tbody = document.querySelector('#tbl tbody'); tbody.innerHTML = '';
+        for (const it of items) {
+          const tr = document.createElement('tr');
+          const d = (it.posted_at||'').replace('T',' ').replace('Z',' UTC');
+          const amt = fmtCents(it.amount_cents);
+          tr.innerHTML = `
+            <td>${d}</td>
+            <td>${it.account?.name||''}</td>
+            <td>${(it.payee||'').replace(/</g,'&lt;')}</td>
+            <td>${(it.memo||'').replace(/</g,'&lt;')}</td>
+            <td class="${it.amount_cents<0?'neg':'pos'}" style="text-align:right">${amt}</td>
+            <td>${it.is_cleared?'✔︎':'—'}</td>
+            <td>${it.source||''}</td>
+          `;
+          tbody.appendChild(tr);
+        }
+        const m = document.getElementById('meta');
+        m.textContent = `${items.length} of ${total} shown`;
+      }
+
+      async function run() {
+        try {
+          const url = buildURL();
+          const j = await fetchJSON(url);
+          render(j.items||[], j.total||0);
+        } catch (e) {
+          const tbody = document.querySelector('#tbl tbody'); tbody.innerHTML = '<tr><td colspan="7">Failed to load</td></tr>';
+        }
+      }
+
+      (async () => {
+        await loadAccounts();
+        const today = new Date();
+        const start = new Date(today.getTime() - 14*86400000);
+        document.getElementById('f-start').value = iso(start);
+        document.getElementById('f-end').value = iso(today);
+        await run();
+        document.getElementById('btn-apply').addEventListener('click', run);
+      })();
+    </script>
+  </body>
+  </html>
+

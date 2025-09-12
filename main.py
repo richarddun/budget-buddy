@@ -105,6 +105,10 @@ try:
 except Exception:
     classify_router = None
 try:
+    from api.transactions import router as transactions_router
+except Exception:
+    transactions_router = None
+try:
     from api.accounts import router as accounts_router
 except Exception:
     accounts_router = None
@@ -130,6 +134,8 @@ if calendar_export_router is not None:
     app.include_router(calendar_export_router)
 if accounts_router is not None:
     app.include_router(accounts_router)
+if transactions_router is not None:
+    app.include_router(transactions_router)
 
 # --- File upload Setup ---
 UPLOAD_DIR = Path("uploaded_receipts")
@@ -486,6 +492,12 @@ async def admin_settings(request: Request):
     """Lightweight admin settings page for configurable features (anchors, floors)."""
     csrf_token = os.getenv("CSRF_TOKEN") or None
     return templates.TemplateResponse("admin.html", {"request": request, "csrf_token": csrf_token, "currency_symbol": CURRENCY_SYMBOL})
+
+@app.get("/transactions", response_class=HTMLResponse)
+async def transactions_browser(request: Request):
+    """Simple transaction browser to verify local data."""
+    csrf_token = os.getenv("CSRF_TOKEN") or None
+    return templates.TemplateResponse("transactions.html", {"request": request, "csrf_token": csrf_token, "currency_symbol": CURRENCY_SYMBOL})
 
 @app.get("/budgets")
 def get_budget():
