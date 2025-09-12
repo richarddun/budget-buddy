@@ -27,7 +27,8 @@ except Exception:
     pass
 STAGING = os.getenv("STAGING", "false").lower() in ("1", "true", "yes")
 from config import BASE_PATH, CURRENCY_SYMBOL
-from jobs.daily_ingestion import scheduler_loop
+from jobs.daily_ingestion import scheduler_loop, run_daily_ingestion
+from jobs.nightly_snapshot import run_nightly_snapshot_async
 from jobs.backfill_payee_rules import backfill_from_ynab
 from forecast.calendar import Entry as FcEntry
 from datetime import date as _date
@@ -365,7 +366,7 @@ async def startup():
     enable = os.getenv("ENABLE_DAILY_INGESTION", "false").lower() in ("1", "true", "yes", "on")
     leader = os.getenv("SCHEDULER_LEADER", "true").lower() in ("1", "true", "yes", "on")
     if enable and leader:
-        hour = int(os.getenv("DAILY_INGESTION_HOUR", "7"))
+        hour = int(os.getenv("DAILY_INGESTION_HOUR", "9"))
         minute = int(os.getenv("DAILY_INGESTION_MINUTE", "0"))
         logger.info(f"[INIT] Starting daily scheduler for {hour:02d}:{minute:02d}")
         app.state.daily_task = asyncio.create_task(scheduler_loop(hour=hour, minute=minute))
@@ -517,6 +518,28 @@ async def backfill_payee_rules_endpoint(
     except Exception as e:
         logger.exception(f"Backfill failed: {e}")
         return {"error": str(e)}
+
+
+@app.post("/local/sync-transactions-now")
+async def sync_transactions_now(request: Request):
+    """Run an immediate transaction sync (bypassing cache), then snapshot.
+
+    Admin + CSRF protected. Returns summary JSON with fetched count.
+    """
+    _require_auth_dep(request)
+    _require_csrf_dep(request)
+    _rate_limit_dep(request, scope="admin-local-sync-now")
+    try:
+        summary = await run_daily_ingestion()
+        # After ingestion, refresh snapshot so UI has current balances
+        try:
+            await run_nightly_snapshot_async()
+        except Exception as e:
+            logger.exception(f"[SYNC NOW] Snapshot failed after ingestion: {e}")
+        return summary
+    except Exception as e:
+        logger.exception(f"[SYNC NOW] Ingestion failed: {e}")
+        return {"status": "error", "reason": str(e)}
 
 @app.get("/budget-health", response_class=HTMLResponse)
 async def get_budget_health(request: Request):

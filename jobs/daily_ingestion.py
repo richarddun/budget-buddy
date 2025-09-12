@@ -64,12 +64,15 @@ async def _ai_review_transactions_if_enabled(txns_text: str) -> None:
         logger.exception(f"AI review failed: {e}")
 
 
-async def run_daily_ingestion() -> None:
-    """Fetch recent transactions and optionally let AI review/adjust budget."""
+async def run_daily_ingestion() -> dict:
+    """Fetch recent transactions and optionally let AI review/adjust budget.
+
+    Returns a summary dict including at least: {status, fetched, since_date}.
+    """
     budget_id = os.getenv("YNAB_BUDGET_ID")
     if not budget_id:
         logger.warning("YNAB_BUDGET_ID not set; skipping daily ingestion.")
-        return
+        return {"status": "skipped", "reason": "missing_budget_id"}
 
     client = YNABSdkClient()
     tz = _tz()
@@ -77,7 +80,17 @@ async def run_daily_ingestion() -> None:
     # Ingest transactions since yesterday (you can change this window)
     since_date = (today - timedelta(days=1)).isoformat()
 
+    # Always bypass cached transaction responses for daily sync
     try:
+        try:
+            client.invalidate_cache_for('get_transactions', budget_id, since_date)
+        except Exception:
+            # Fallback: clear whole cache if granular invalidation fails
+            try:
+                client.clear_cache()
+            except Exception:
+                pass
+
         txns = client.get_transactions(budget_id, since_date)
         txns_text = client.slim_transactions_text(txns)
         logger.info(
@@ -85,7 +98,7 @@ async def run_daily_ingestion() -> None:
         )
     except Exception as e:
         logger.exception(f"Failed to fetch transactions: {e}")
-        return
+        return {"status": "error", "reason": str(e)}
 
     # Save locally and attempt auto-categorisation via payee rules
     for t in txns:
@@ -130,6 +143,8 @@ async def run_daily_ingestion() -> None:
             run_alert_checks()
     except Exception as e:  # pragma: no cover
         logger.exception(f"Alert checks after ingestion failed: {e}")
+
+    return {"status": "ok", "fetched": len(txns), "since_date": since_date}
 
 
 async def scheduler_loop(hour: int = 7, minute: int = 0) -> None:

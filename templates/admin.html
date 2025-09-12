@@ -39,6 +39,15 @@
         </div>
       </div>
 
+  <div class="panel">
+        <div class="section-title">Data Sync</div>
+        <div class="muted">Manually trigger a transaction sync now (bypasses cache), then refresh the forecast snapshot.</div>
+        <div style="display:flex; gap:8px; align-items:center; margin-top:8px">
+          <button id="btn-sync-now" type="button">Sync now</button>
+          <span id="sync-now-status" class="muted"></span>
+        </div>
+      </div>
+
       <div class="panel">
         <div class="section-title">Account Anchors & Overdraft Floors</div>
         <div class="muted">Set a ground-truth balance and an optional floor (e.g., -75000 for -€750.00). Opening balances are derived from the anchor + cleared deltas.</div>
@@ -73,6 +82,26 @@
         try { inp.value = localStorage.getItem('adminToken') || ''; } catch {}
         btn.addEventListener('click', () => {
           try { localStorage.setItem('adminToken', inp.value || ''); status.textContent = 'Saved'; status.className='ok'; setTimeout(()=>status.textContent='',1500);} catch { status.textContent = 'Unable to store'; status.className='err'; }
+        });
+      })();
+
+      // Sync now
+      (function initSyncNow(){
+        const btn = document.getElementById('btn-sync-now');
+        const status = document.getElementById('sync-now-status');
+        btn?.addEventListener('click', async () => {
+          status.textContent = 'Running...'; status.className='muted'; btn.disabled = true;
+          const base = '{{ request.url_for("index") }}'.replace(/\/$/, '');
+          try {
+            const r = await fetch(base + '/local/sync-transactions-now', { method: 'POST', headers: { ...csrfHeader(), ...adminHeader() }});
+            const j = await r.json().catch(()=>({status:'error'}));
+            if (!r.ok || j.status !== 'ok') { throw new Error(j.reason || 'Error'); }
+            status.textContent = `Done (fetched ${j.fetched} since ${j.since_date})`; status.className='ok';
+          } catch (e) {
+            status.textContent = 'Error'; status.className='err';
+          } finally {
+            btn.disabled = false;
+          }
         });
       })();
 
@@ -151,4 +180,3 @@
     </script>
   </body>
   </html>
-
