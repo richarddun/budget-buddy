@@ -39,12 +39,16 @@
         </div>
       </div>
 
-  <div class="panel">
+      <div class="panel">
         <div class="section-title">Data Sync</div>
         <div class="muted">Manually trigger a transaction sync now (bypasses cache), then refresh the forecast snapshot.</div>
         <div style="display:flex; gap:8px; align-items:center; margin-top:8px">
           <button id="btn-sync-now" type="button">Sync now</button>
           <span id="sync-now-status" class="muted"></span>
+        </div>
+        <div style="display:flex; gap:8px; align-items:center; margin-top:8px">
+          <button id="btn-purge-cache" type="button" style="background:#7c3aed">Purge YNAB cache</button>
+          <span id="purge-cache-status" class="muted"></span>
         </div>
       </div>
 
@@ -97,6 +101,26 @@
             const j = await r.json().catch(()=>({status:'error'}));
             if (!r.ok || j.status !== 'ok') { throw new Error(j.reason || 'Error'); }
             status.textContent = `Done (fetched ${j.fetched} since ${j.since_date})`; status.className='ok';
+          } catch (e) {
+            status.textContent = 'Error'; status.className='err';
+          } finally {
+            btn.disabled = false;
+          }
+        });
+      })();
+
+      // Purge cache
+      (function initPurgeCache(){
+        const btn = document.getElementById('btn-purge-cache');
+        const status = document.getElementById('purge-cache-status');
+        btn?.addEventListener('click', async () => {
+          status.textContent = 'Purging...'; status.className='muted'; btn.disabled = true;
+          const base = '{{ request.url_for("index") }}'.replace(/\/$/, '');
+          try {
+            const r = await fetch(base + '/local/purge-ynab-cache', { method: 'POST', headers: { ...csrfHeader(), ...adminHeader() }});
+            const j = await r.json().catch(()=>({status:'error'}));
+            if (!r.ok || j.status !== 'ok') { throw new Error(j.reason || 'Error'); }
+            status.textContent = 'Cache cleared'; status.className='ok';
           } catch (e) {
             status.textContent = 'Error'; status.className='err';
           } finally {

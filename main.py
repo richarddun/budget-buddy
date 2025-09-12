@@ -553,6 +553,22 @@ async def sync_transactions_now(request: Request):
         logger.exception(f"[SYNC NOW] Ingestion failed: {e}")
         return {"status": "error", "reason": str(e)}
 
+
+@app.post("/local/purge-ynab-cache")
+async def purge_ynab_cache(request: Request):
+    """Purge the on-disk YNAB client cache (.ynab_cache). Admin + CSRF required."""
+    _require_auth_dep(request)
+    _require_csrf_dep(request)
+    _rate_limit_dep(request, scope="admin-local-cache")
+    try:
+        from ynab_sdk_client import YNABSdkClient
+
+        YNABSdkClient().clear_cache()
+        return {"status": "ok"}
+    except Exception as e:
+        logger.exception(f"[CACHE PURGE] Failed: {e}")
+        return {"status": "error", "reason": str(e)}
+
 @app.get("/budget-health", response_class=HTMLResponse)
 async def get_budget_health(request: Request):
     """Generate budget health report via Jinja template"""

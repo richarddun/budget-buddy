@@ -80,16 +80,12 @@ async def run_daily_ingestion() -> dict:
     # Ingest transactions since yesterday (you can change this window)
     since_date = (today - timedelta(days=1)).isoformat()
 
-    # Always bypass cached transaction responses for daily sync
+    # Always bypass cached reads for daily sync — purge cache first
     try:
         try:
-            client.invalidate_cache_for('get_transactions', budget_id, since_date)
+            client.clear_cache()
         except Exception:
-            # Fallback: clear whole cache if granular invalidation fails
-            try:
-                client.clear_cache()
-            except Exception:
-                pass
+            pass
 
         txns = client.get_transactions(budget_id, since_date)
         txns_text = client.slim_transactions_text(txns)
