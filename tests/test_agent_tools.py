@@ -207,6 +207,43 @@ def test_add_and_delete_commitment_tool(tmp_path, monkeypatch):
     assert del_resp["status"] == "deleted"
 
 
+def test_add_commitment_accepts_uuid_and_resolves_account(tmp_path, monkeypatch):
+    db_path = tmp_path / "agent_tools_uuid.db"
+    _init_db(db_path)
+    monkeypatch.setenv("BUDGET_DB_PATH", str(db_path))
+    _fake_agent_modules(monkeypatch)
+
+    mod = importlib.import_module("agents.budget_agent_real")
+
+    # Monkeypatch YNAB client get_accounts to return a UUID mapping
+    fake_uuid = "6f42b19d-bf63-4cfa-99d9-637e262b3286"
+    def _fake_get_accounts(budget_id):
+        return [{"id": fake_uuid, "name": "CURRENT-166", "type": "depository", "currency_code": "USD"}]
+
+    monkeypatch.setattr(mod.client, "get_accounts", _fake_get_accounts, raising=True)
+
+    payload = mod.AddCommitmentInput(
+        name="Power Utility",
+        amount_eur=85.0,
+        due_rule="MONTHLY",
+        next_due_date=date(2025, 1, 7),
+        account_id=fake_uuid,  # UUID string should be accepted
+        type="utility",
+    )
+    resp = mod.add_commitment(payload)
+    assert resp["status"] == "commitment_saved"
+    cm = resp["commitment"]
+    assert cm["name"] == "Power Utility"
+    assert int(cm["amount_cents"]) == 8500
+    # Account should have been created or resolved
+    conn = sqlite3.connect(db_path)
+    try:
+        row = conn.execute("SELECT COUNT(*) FROM accounts WHERE name = 'CURRENT-166'").fetchone()
+        assert int(row[0]) == 1
+    finally:
+        conn.close()
+
+
 def test_list_tools(tmp_path, monkeypatch):
     db_path = tmp_path / "agent_tools_list.db"
     _init_db(db_path)

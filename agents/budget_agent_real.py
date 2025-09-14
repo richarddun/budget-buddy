@@ -259,7 +259,10 @@ class AddCommitmentInput(BaseModel):
     amount_eur: float
     due_rule: str = "MONTHLY"  # e.g., MONTHLY, WEEKLY, ONE_OFF
     next_due_date: date
-    account_id: int | None = None
+    # Accept local account id (int) or YNAB UUID string for convenience; also optional name fallback
+    account_id: int | str | None = None
+    account_uuid: str | None = None
+    account_name: str | None = None
     priority: int | None = 1
     flexible_window_days: int | None = 0
     category_id: int | None = None
@@ -271,13 +274,51 @@ def add_commitment(input: AddCommitmentInput):
     """Add a recurring commitment (e.g., rent, mortgage, utilities). Amount in EUR, stored as integer cents. Defaults: MONTHLY, AS PREV_BUSINESS_DAY shift is applied by forecast engine."""
     dbp = _default_db_path()
     amt_cents = int(round(float(input.amount_eur) * 100))
-    # Choose a default account if not provided
-    acct_id = input.account_id
+    # Resolve account: supports local int id, YNAB UUID, or account name
+    acct_id: int | None = None
     with sqlite3.connect(dbp) as conn:
         conn.row_factory = sqlite3.Row
+        def _ensure_local_account_by_name(name: str, type_: str | None = None, currency: str | None = None) -> int:
+            r = conn.execute("SELECT id FROM accounts WHERE name = ?", (name,)).fetchone()
+            if r:
+                return int(r["id"])
+            conn.execute(
+                "INSERT INTO accounts(name, type, currency, is_active) VALUES (?,?,?,1)",
+                (name, type_ or "depository", currency or "USD"),
+            )
+            return int(conn.execute("SELECT last_insert_rowid()").fetchone()[0])
+
+        # If explicit local id provided as int
+        if isinstance(input.account_id, int):
+            acct_id = int(input.account_id)
+        # If UUID string provided via account_id or account_uuid, resolve using YNAB and upsert by name
+        uuid = None
+        if isinstance(input.account_id, str):
+            uuid = input.account_id
+        if input.account_uuid and not uuid:
+            uuid = input.account_uuid
+        if uuid:
+            try:
+                accts = client.get_accounts(BUDGET_ID)  # type: ignore[arg-type]
+            except Exception:
+                accts = []
+            match = None
+            for a in accts or []:
+                if str(a.get("id")) == str(uuid):
+                    match = a
+                    break
+            if match:
+                name = match.get("name") or f"YNAB {str(uuid)[:8]}"
+                type_ = match.get("type") or "depository"
+                currency = match.get("currency") or match.get("currency_code") or "USD"
+                acct_id = _ensure_local_account_by_name(name, type_, currency)
+        # If still unresolved and we have a name
+        if acct_id is None and input.account_name:
+            acct_id = _ensure_local_account_by_name(input.account_name)
+        # Fallback: first active account or create a default one
         if acct_id is None:
             row = conn.execute("SELECT id FROM accounts WHERE is_active = 1 ORDER BY id LIMIT 1").fetchone()
-            acct_id = int(row["id"]) if row else 1
+            acct_id = int(row["id"]) if row else _ensure_local_account_by_name("Checking")
         cur = conn.execute(
             """
             INSERT INTO commitments(name, amount_cents, due_rule, next_due_date, priority, account_id, flexible_window_days, category_id, type)
