@@ -13,6 +13,24 @@ from db.migrate import run_migrations
 
 def _fake_agent_modules(monkeypatch):
     """Inject lightweight fakes for pydantic_ai and ynab model submodules so we can import agent tooling without heavy deps."""
+    # Ensure STAGING mode to avoid real YNAB setup
+    monkeypatch.setenv("STAGING", "true")
+
+    # pydantic
+    import types as _t
+    pyd = _t.ModuleType("pydantic")
+    class _BM:
+        def __init_subclass__(cls, **kw):
+            return super().__init_subclass__(**kw)
+    pyd.BaseModel = _BM
+    pyd.field_validator = lambda *a, **k: (lambda f: f)
+    monkeypatch.setitem(os.sys.modules, "pydantic", pyd)
+
+    # dotenv
+    dtenv = _t.ModuleType("dotenv")
+    dtenv.load_dotenv = lambda *a, **k: None
+    monkeypatch.setitem(os.sys.modules, "dotenv", dtenv)
+
     # pydantic_ai
     pai = ModuleType("pydantic_ai")
 
@@ -189,6 +207,43 @@ def test_add_and_delete_commitment_tool(tmp_path, monkeypatch):
     assert del_resp["status"] == "deleted"
 
 
+def test_list_tools(tmp_path, monkeypatch):
+    db_path = tmp_path / "agent_tools_list.db"
+    _init_db(db_path)
+    monkeypatch.setenv("BUDGET_DB_PATH", str(db_path))
+    _fake_agent_modules(monkeypatch)
+
+    mod = importlib.import_module("agents.budget_agent_real")
+
+    # Seed one key event and one commitment directly via tools
+    ke = mod.add_key_event(
+        mod.AddKeyEventInput(
+            name="Anniversary",
+            event_date=date(2025, 6, 15),
+            planned_amount_eur=200.0,
+            repeat_rule="ANNUAL",
+        )
+    )["event"]
+
+    cm = mod.add_commitment(
+        mod.AddCommitmentInput(
+            name="Internet",
+            amount_eur=60.0,
+            due_rule="MONTHLY",
+            next_due_date=date(2025, 1, 10),
+            type="utility",
+        )
+    )["commitment"]
+
+    # List key events (broad window)
+    ke_list = mod.list_key_events(mod.ListKeyEventsInput(from_date=date(2025, 1, 1), to_date=date(2025, 12, 31)))
+    assert any(item["id"] == ke["id"] for item in ke_list["items"]) and ke_list["count"] >= 1
+
+    # List commitments (all)
+    cm_list = mod.list_commitments(mod.ListCommitmentsInput())
+    assert any(item["id"] == cm["id"] for item in cm_list["items"]) and cm_list["count"] >= 1
+
+
 def test_detect_commitment_candidates(tmp_path, monkeypatch):
     db_path = tmp_path / "agent_tools_detect.db"
     _init_db(db_path)
@@ -221,4 +276,3 @@ def test_detect_commitment_candidates(tmp_path, monkeypatch):
     assert acme.get("type") in ("mortgage", "bill")
     # suggested_day_of_month provided by recurring detector when available
     assert isinstance(acme.get("suggested_day_of_month"), (int, type(None)))
-

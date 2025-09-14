@@ -95,6 +95,9 @@ from localdb import payee_db
 import sqlite3
 from forecast.calendar import _default_db_path
 from budget_health_analyzer import BudgetHealthAnalyzer
+from forecast.calendar import expand_calendar, compute_balances
+from api.forecast import compute_opening_balance_cents
+from q import queries as Q
 
 # --- Tool Input Schemas and Bindings ---
 class GetAccountsInput(BaseModel):
@@ -389,6 +392,260 @@ def detect_commitment_candidates(input: DetectCommitmentCandidatesInput):
     if input.limit:
         out = out[: int(input.limit)]
     return {"candidates": out, "note": "Use add_commitment to save specific items."}
+
+
+# --- Listing Tools (readability) ---
+class ListKeyEventsInput(BaseModel):
+    from_date: date | None = None
+    to_date: date | None = None
+
+
+@budget_agent.tool_plain
+def list_key_events(input: ListKeyEventsInput):
+    """List existing key spending events, optionally filtered by from/to dates (inclusive)."""
+    dbp = _default_db_path()
+    where = []
+    params: list = []
+    if input.from_date:
+        where.append("DATE(event_date) >= ?")
+        params.append(input.from_date.isoformat())
+    if input.to_date:
+        where.append("DATE(event_date) <= ?")
+        params.append(input.to_date.isoformat())
+    sql = (
+        "SELECT id, name, event_date, repeat_rule, planned_amount_cents, category_id, lead_time_days, shift_policy, account_id "
+        "FROM key_spend_events"
+    )
+    if where:
+        sql += " WHERE " + " AND ".join(where)
+    sql += " ORDER BY DATE(event_date) ASC, id ASC"
+    rows = []
+    with sqlite3.connect(dbp) as conn:
+        conn.row_factory = sqlite3.Row
+        for r in conn.execute(sql, params):
+            rows.append(
+                {
+                    "id": int(r["id"]),
+                    "name": r["name"],
+                    "event_date": r["event_date"],
+                    "repeat_rule": r["repeat_rule"],
+                    "planned_amount_cents": int(r["planned_amount_cents"]) if r["planned_amount_cents"] is not None else None,
+                    "category_id": int(r["category_id"]) if r["category_id"] is not None else None,
+                    "lead_time_days": int(r["lead_time_days"]) if r["lead_time_days"] is not None else None,
+                    "shift_policy": r["shift_policy"],
+                    "account_id": int(r["account_id"]) if r["account_id"] is not None else None,
+                }
+            )
+    return {"items": rows, "count": len(rows)}
+
+
+class ListCommitmentsInput(BaseModel):
+    type: str | None = None  # bill, rent, mortgage, loan, utility, etc.
+
+
+@budget_agent.tool_plain
+def list_commitments(input: ListCommitmentsInput):
+    """List commitments. Optionally filter by type (case-insensitive)."""
+    dbp = _default_db_path()
+    rows = []
+    with sqlite3.connect(dbp) as conn:
+        conn.row_factory = sqlite3.Row
+        if input.type:
+            cur = conn.execute(
+                "SELECT id, name, amount_cents, due_rule, next_due_date, priority, account_id, flexible_window_days, category_id, type FROM commitments WHERE LOWER(type) = LOWER(?) ORDER BY id",
+                (input.type.strip(),),
+            )
+        else:
+            cur = conn.execute(
+                "SELECT id, name, amount_cents, due_rule, next_due_date, priority, account_id, flexible_window_days, category_id, type FROM commitments ORDER BY id"
+            )
+        for r in cur:
+            rows.append({k: (int(r[k]) if isinstance(r[k], (int,)) or (r[k] is not None and str(r[k]).isdigit()) else r[k]) for k in r.keys()})
+    return {"items": rows, "count": len(rows)}
+
+
+# --- Forecast/Overview Tools ---
+class ForecastCalendarInput(BaseModel):
+    start: date
+    end: date
+    buffer_floor_cents: int | None = 0
+    accounts: list[int] | None = None
+
+
+@budget_agent.tool_plain
+def forecast_calendar(input: ForecastCalendarInput):
+    """Compute deterministic calendar forecast between start and end using local DB, returning opening, balances, entries, and min balance/date."""
+    dbp = _default_db_path()
+    opening_as_of = input.start - timedelta(days=1)
+    acc_set = set(input.accounts) if input.accounts else None
+    opening = compute_opening_balance_cents(as_of=opening_as_of, db_path=dbp, accounts=acc_set)
+    entries = expand_calendar(input.start, input.end, db_path=dbp, accounts=acc_set)
+    balances = compute_balances(opening, entries)
+    min_balance_cents = None
+    min_balance_date = None
+    if balances:
+        for d in sorted(balances.keys()):
+            if min_balance_cents is None or balances[d] < min_balance_cents:
+                min_balance_cents = balances[d]
+                min_balance_date = d
+    return {
+        "opening_balance_cents": int(opening),
+        "balances": {d.isoformat(): int(v) for d, v in balances.items()},
+        "entries": [
+            {
+                "date": e.date.isoformat(),
+                "type": e.type,
+                "name": e.name,
+                "amount_cents": int(e.amount_cents),
+                "source_id": int(e.source_id),
+                "shift_applied": bool(e.shift_applied),
+                "policy": e.policy,
+            }
+            for e in entries
+        ],
+        "min_balance_cents": int(min_balance_cents) if min_balance_cents is not None else None,
+        "min_balance_date": min_balance_date.isoformat() if min_balance_date else None,
+    }
+
+
+class ForecastHistoryInput(BaseModel):
+    start: date
+    end: date
+    accounts: list[int] | None = None
+
+
+@budget_agent.tool_plain
+def forecast_history(input: ForecastHistoryInput):
+    """Return ledger-based balances between start and end (cleared transactions, active accounts)."""
+    from api.forecast import _ledger_daily_deltas  # reuse tested helper
+    dbp = _default_db_path()
+    opening_as_of = input.start - timedelta(days=1)
+    acc_set = set(input.accounts) if input.accounts else None
+    opening = compute_opening_balance_cents(as_of=opening_as_of, db_path=dbp, accounts=acc_set)
+    # Build deltas via helper, with account filter path when provided
+    conn = sqlite3.connect(dbp)
+    conn.row_factory = sqlite3.Row
+    try:
+        if acc_set:
+            qmarks = ",".join(["?"] * len(acc_set))
+            rows = conn.execute(
+                f"""
+                SELECT DATE(t.posted_at) AS d, COALESCE(SUM(t.amount_cents), 0) AS delta
+                FROM transactions t
+                JOIN accounts a ON a.id = t.account_id
+                WHERE a.is_active = 1 AND t.is_cleared = 1
+                  AND a.id IN ({qmarks})
+                  AND DATE(t.posted_at) >= ? AND DATE(t.posted_at) <= ?
+                GROUP BY DATE(t.posted_at)
+                ORDER BY DATE(t.posted_at)
+                """,
+                (*[int(x) for x in sorted(acc_set)], input.start.isoformat(), input.end.isoformat()),
+            ).fetchall()
+            deltas = {date.fromisoformat(str(r["d"])): int(r["delta"]) for r in rows}
+        else:
+            deltas = _ledger_daily_deltas(conn, input.start, input.end)
+    finally:
+        conn.close()
+
+    balances = {}
+    running = int(opening)
+    d = input.start
+    while d <= input.end:
+        running = running + int(deltas.get(d, 0))
+        balances[d.isoformat()] = running
+        d = d + timedelta(days=1)
+    return {
+        "opening_balance_cents": int(opening),
+        "balances": balances,
+        "meta": {"source": "ledger", "accounts": sorted(list(acc_set)) if acc_set else None},
+    }
+
+
+class OverviewDigestInput(BaseModel):
+    pass
+
+
+@budget_agent.tool_plain
+def overview_digest(input: OverviewDigestInput):
+    """Return the overview digest (current balance, safe-to-spend today, health score)."""
+    from api.overview import get_overview_digest
+    return get_overview_digest()
+
+
+# --- Q (Query) Tools ---
+class QMonthlyByCategoryInput(BaseModel):
+    start: date
+    end: date
+    category_id: int | None = None
+    category: str | None = None
+
+
+@budget_agent.tool_plain
+def q_monthly_total_by_category(input: QMonthlyByCategoryInput):
+    return Q.monthly_total_by_category(input.start, input.end, category_id=input.category_id, category=input.category)
+
+
+@budget_agent.tool_plain
+def q_monthly_average_by_category(input: QMonthlyByCategoryInput):
+    return Q.monthly_average_by_category(input.start, input.end, category_id=input.category_id, category=input.category)
+
+
+class QWindowInput(BaseModel):
+    start: date
+    end: date
+
+
+@budget_agent.tool_plain
+def q_subscriptions(input: QWindowInput):
+    return Q.subscriptions(input.start, input.end)
+
+
+@budget_agent.tool_plain
+def q_category_breakdown(input: QWindowInput):
+    return Q.category_breakdown(input.start, input.end)
+
+
+class QSupportingTransactionsInput(BaseModel):
+    start: date
+    end: date
+    category_id: int | None = None
+    category: str | None = None
+    page: int = 1
+    page_size: int = 50
+
+
+@budget_agent.tool_plain
+def q_supporting_transactions(input: QSupportingTransactionsInput):
+    return Q.supporting_transactions(
+        input.start, input.end,
+        category_id=input.category_id, category=input.category,
+        page=input.page, page_size=input.page_size,
+    )
+
+
+class QNoInput(BaseModel):
+    pass
+
+
+@budget_agent.tool_plain
+def q_active_loans(input: QNoInput):
+    return Q.active_loans()
+
+
+@budget_agent.tool_plain
+def q_household_fixed_costs(input: QNoInput):
+    return Q.household_fixed_costs()
+
+
+class QPackInput(BaseModel):
+    pack: str
+    period: str | None = None
+
+
+@budget_agent.tool_plain
+def q_pack(input: QPackInput):
+    from q.packs import assemble_pack
+    return assemble_pack(input.pack, input.period)
 
 class GetAllScheduledTransactionsInput(BaseModel):
     budget_id: str
