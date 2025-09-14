@@ -92,6 +92,9 @@ system_prompt = (
 # --- Instantiate YNAB SDK Client Once ---
 client = YNABSdkClient()
 from localdb import payee_db
+import sqlite3
+from forecast.calendar import _default_db_path
+from budget_health_analyzer import BudgetHealthAnalyzer
 
 # --- Tool Input Schemas and Bindings ---
 class GetAccountsInput(BaseModel):
@@ -175,6 +178,217 @@ def get_transactions(input: GetTransactionsInput):
 #        return {
 #            "error": "There was a network issue contacting the YNAB API. The remote connection was closed unexpectedly. You may try again shortly or ask to continue later."
 #        }
+
+# --- Key Events Tools ---
+class AddKeyEventInput(BaseModel):
+    name: str
+    event_date: date
+    planned_amount_eur: float | None = None
+    repeat_rule: str | None = None
+    category_id: int | None = None
+    lead_time_days: int | None = None
+    shift_policy: str | None = "AS_SCHEDULED"  # AS_SCHEDULED | PREV_BUSINESS_DAY | NEXT_BUSINESS_DAY
+    account_id: int | None = None
+
+
+@budget_agent.tool_plain
+def add_key_event(input: AddKeyEventInput):
+    """Add a key spending event for the runway forecast. Accepts name, date, optional amount (EUR), repeat_rule, lead_time_days, shift_policy, category_id, account_id."""
+    dbp = _default_db_path()
+    amt_cents = None if input.planned_amount_eur is None else int(round(float(input.planned_amount_eur) * 100))
+    with sqlite3.connect(dbp) as conn:
+        cur = conn.execute(
+            """
+            INSERT INTO key_spend_events(name, event_date, repeat_rule, planned_amount_cents, category_id, lead_time_days, shift_policy, account_id)
+            VALUES (?,?,?,?,?,?,?,?)
+            """,
+            (
+                input.name.strip(),
+                input.event_date.isoformat(),
+                input.repeat_rule,
+                amt_cents,
+                input.category_id,
+                input.lead_time_days,
+                (input.shift_policy or "AS_SCHEDULED").strip().upper(),
+                input.account_id,
+            ),
+        )
+        event_id = int(cur.lastrowid)
+        row = conn.execute(
+            "SELECT id, name, event_date, repeat_rule, planned_amount_cents, category_id, lead_time_days, shift_policy, account_id FROM key_spend_events WHERE id = ?",
+            (event_id,),
+        ).fetchone()
+    return {
+        "status": "key_event_saved",
+        "event": {
+            "id": int(row[0]),
+            "name": row[1],
+            "event_date": row[2],
+            "repeat_rule": row[3],
+            "planned_amount_cents": int(row[4]) if row[4] is not None else None,
+            "category_id": int(row[5]) if row[5] is not None else None,
+            "lead_time_days": int(row[6]) if row[6] is not None else None,
+            "shift_policy": row[7],
+            "account_id": int(row[8]) if row[8] is not None else None,
+        },
+    }
+
+
+class DeleteKeyEventInput(BaseModel):
+    id: int
+
+
+@budget_agent.tool_plain
+def delete_key_event(input: DeleteKeyEventInput):
+    """Delete a key spending event by id."""
+    dbp = _default_db_path()
+    with sqlite3.connect(dbp) as conn:
+        cur = conn.execute("DELETE FROM key_spend_events WHERE id = ?", (int(input.id),))
+        deleted = cur.rowcount
+    if deleted == 0:
+        return {"status": "not_found", "id": int(input.id)}
+    return {"status": "deleted", "id": int(input.id)}
+
+
+# --- Commitments Tools ---
+class AddCommitmentInput(BaseModel):
+    name: str
+    amount_eur: float
+    due_rule: str = "MONTHLY"  # e.g., MONTHLY, WEEKLY, ONE_OFF
+    next_due_date: date
+    account_id: int | None = None
+    priority: int | None = 1
+    flexible_window_days: int | None = 0
+    category_id: int | None = None
+    type: str = "bill"  # e.g., bill, rent, mortgage, loan, utility
+
+
+@budget_agent.tool_plain
+def add_commitment(input: AddCommitmentInput):
+    """Add a recurring commitment (e.g., rent, mortgage, utilities). Amount in EUR, stored as integer cents. Defaults: MONTHLY, AS PREV_BUSINESS_DAY shift is applied by forecast engine."""
+    dbp = _default_db_path()
+    amt_cents = int(round(float(input.amount_eur) * 100))
+    # Choose a default account if not provided
+    acct_id = input.account_id
+    with sqlite3.connect(dbp) as conn:
+        conn.row_factory = sqlite3.Row
+        if acct_id is None:
+            row = conn.execute("SELECT id FROM accounts WHERE is_active = 1 ORDER BY id LIMIT 1").fetchone()
+            acct_id = int(row["id"]) if row else 1
+        cur = conn.execute(
+            """
+            INSERT INTO commitments(name, amount_cents, due_rule, next_due_date, priority, account_id, flexible_window_days, category_id, type)
+            VALUES (?,?,?,?,?,?,?,?,?)
+            """,
+            (
+                input.name.strip(),
+                amt_cents,
+                input.due_rule.strip().upper(),
+                input.next_due_date.isoformat(),
+                int(input.priority) if input.priority is not None else None,
+                int(acct_id),
+                int(input.flexible_window_days) if input.flexible_window_days is not None else None,
+                int(input.category_id) if input.category_id is not None else None,
+                input.type.strip().lower(),
+            ),
+        )
+        cid = int(cur.lastrowid)
+        row = conn.execute(
+            "SELECT id, name, amount_cents, due_rule, next_due_date, priority, account_id, flexible_window_days, category_id, type FROM commitments WHERE id = ?",
+            (cid,),
+        ).fetchone()
+    return {
+        "status": "commitment_saved",
+        "commitment": {k: (int(row[k]) if isinstance(row[k], (int,)) or (row[k] is not None and str(row[k]).isdigit()) else row[k]) for k in row.keys()}
+    }
+
+
+class DeleteCommitmentInput(BaseModel):
+    id: int
+
+
+@budget_agent.tool_plain
+def delete_commitment(input: DeleteCommitmentInput):
+    """Delete a commitment by id."""
+    dbp = _default_db_path()
+    with sqlite3.connect(dbp) as conn:
+        cur = conn.execute("DELETE FROM commitments WHERE id = ?", (int(input.id),))
+        deleted = cur.rowcount
+    if deleted == 0:
+        return {"status": "not_found", "id": int(input.id)}
+    return {"status": "deleted", "id": int(input.id)}
+
+
+class DetectCommitmentCandidatesInput(BaseModel):
+    min_confidence: int | None = 60
+    min_avg_amount_eur: float | None = 10.0
+    limit: int | None = 10
+
+
+@budget_agent.tool_plain
+def detect_commitment_candidates(input: DetectCommitmentCandidatesInput):
+    """Identify likely recurring commitments (mortgage, rent, loans, utilities) from recent transactions and return candidates without writing.
+
+    Uses a lenient subscription detector and recurring-pattern helper to estimate day-of-month.
+    """
+    analyzer = BudgetHealthAnalyzer(BUDGET_ID)
+    analyzer._load_data()
+    subs = analyzer.detect_subscriptions_and_scheduled_payments()
+    rec = analyzer._detect_recurring_transactions()
+    # Map payee -> most_common_day when available
+    dom_map: dict[str, int] = {}
+    for r in rec:
+        n = (r.get('payee_name') or '').strip()
+        if n and isinstance(r.get('most_common_day'), int):
+            dom_map[n] = int(r['most_common_day'])
+
+    KEYWORDS = [
+        'mortgage', 'rent', 'loan', 'internet', 'broadband', 'fiber', 'wifi',
+        'electric', 'power', 'gas', 'water', 'utility', 'utilities', 'phone', 'mobile', 'cable'
+    ]
+
+    def classify_type(name: str) -> str:
+        s = name.lower()
+        if 'mortgage' in s:
+            return 'mortgage'
+        if 'rent' in s:
+            return 'rent'
+        if 'loan' in s:
+            return 'loan'
+        if any(k in s for k in ['electric','power','gas','water','utility','utilities']):
+            return 'utility'
+        if any(k in s for k in ['internet','broadband','fiber','wifi','phone','mobile','cable']):
+            return 'utility'
+        return 'bill'
+
+    out = []
+    for s in subs:
+        name = s.get('payee_name') or ''
+        if not name:
+            continue
+        amount = float(s.get('avg_amount') or 0.0)
+        conf = int(s.get('confidence_score') or 0)
+        if input.min_avg_amount_eur is not None and amount < float(input.min_avg_amount_eur):
+            continue
+        if input.min_confidence is not None and conf < int(input.min_confidence):
+            continue
+        if not any(k in name.lower() for k in KEYWORDS):
+            # Keep high-confidence, high-amount subscriptions even if keywords not matched
+            if conf < 80 or amount < 20:
+                continue
+        dom = dom_map.get(name)
+        out.append({
+            "name": name,
+            "amount_eur": round(amount, 2),
+            "due_rule": "MONTHLY",
+            "suggested_day_of_month": dom,
+            "type": classify_type(name),
+        })
+
+    out.sort(key=lambda x: (x.get('amount_eur', 0), x.get('name','')), reverse=True)
+    if input.limit:
+        out = out[: int(input.limit)]
+    return {"candidates": out, "note": "Use add_commitment to save specific items."}
 
 class GetAllScheduledTransactionsInput(BaseModel):
     budget_id: str

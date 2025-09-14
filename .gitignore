@@ -13,3 +13,4 @@ error_logging.txt
 affordability*
 *.sqlite
 config.py
+*.py.swp
