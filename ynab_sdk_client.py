@@ -266,7 +266,9 @@ class YNABSdkClient:
         return wrapper
 
     def clear_cache(self):
+        logger.info(f"[CACHE PURGE]")
         shutil.rmtree(".ynab_cache", ignore_errors=True)
+        logger.info(f"{len(os.listdir('.ynab_cache'))} cache files remaining")
 
     def _normalize_currency_fields(self, obj):
         """

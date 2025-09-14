@@ -1,6 +1,9 @@
 """Minimal YNAB API client used for testing without the real SDK."""
 
 import requests
+import logging
+
+_log = logging.getLogger("uvicorn.error")
 
 
 class Configuration:
@@ -21,6 +24,11 @@ class ApiClient:
 
     def get(self, endpoint, params=None):
         url = f"{self.config.base_url}{endpoint}"
+        try:
+            # Lightweight trace to aid debugging of YNAB calls without leaking secrets
+            _log.debug(f"[YNAB GET] {endpoint} params={params or {}}")
+        except Exception:
+            pass
         resp = requests.get(url, headers=self.headers, params=params)
         resp.raise_for_status()
         return resp.json()

@@ -12,3 +12,4 @@ error_logging.txt
 *.pdf.html
 affordability*
 *.sqlite
+config.py

@@ -77,8 +77,15 @@ async def run_daily_ingestion() -> dict:
     client = YNABSdkClient()
     tz = _tz()
     today = datetime.now(tz).date()
-    # Ingest transactions since yesterday (you can change this window)
-    since_date = (today - timedelta(days=1)).isoformat()
+    # Configurable lookback window (default 3 days) to avoid missing backdated imports
+    lookback_days = 3
+    try:
+        lookback_days = int(os.getenv("YNAB_INGEST_LOOKBACK_DAYS", str(lookback_days)))
+        if lookback_days < 1:
+            lookback_days = 1
+    except Exception:
+        lookback_days = 3
+    since_date = (today - timedelta(days=lookback_days)).isoformat()
 
     # Always bypass cached reads for daily sync — purge cache first
     try:
