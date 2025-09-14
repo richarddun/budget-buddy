@@ -1,5 +1,5 @@
 from pydantic_ai import Agent
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, field_validator, model_validator
 from pydantic_ai.models.openai import OpenAIModel
 from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_ai import Agent
@@ -256,7 +256,10 @@ def delete_key_event(input: DeleteKeyEventInput):
 # --- Commitments Tools ---
 class AddCommitmentInput(BaseModel):
     name: str
-    amount_eur: float
+    # Accept multiple forms for amount; prefer amount_eur but tolerate amount or amount_cents
+    amount_eur: float | None = None
+    amount: float | None = None
+    amount_cents: int | None = None
     due_rule: str = "MONTHLY"  # e.g., MONTHLY, WEEKLY, ONE_OFF
     next_due_date: date
     # Accept local account id (int) or YNAB UUID string for convenience; also optional name fallback
@@ -268,11 +271,43 @@ class AddCommitmentInput(BaseModel):
     category_id: int | None = None
     type: str = "bill"  # e.g., bill, rent, mortgage, loan, utility
 
+    @field_validator('amount_eur', mode='before')
+    @classmethod
+    def _parse_amount_eur(cls, v):
+        if v is None:
+            return None
+        if isinstance(v, (int, float)):
+            return float(v)
+        try:
+            cleaned = str(v).replace("€", "").replace(",", "").strip()
+            return float(cleaned)
+        except Exception:
+            return None
+
+    @model_validator(mode='before')
+    @classmethod
+    def _coerce_amount_fields(cls, data: dict):
+        # If amount_eur not provided, fall back to amount or amount_cents
+        if data.get('amount_eur') is None:
+            if data.get('amount') is not None:
+                data['amount_eur'] = data.get('amount')
+            elif data.get('amount_cents') is not None:
+                try:
+                    data['amount_eur'] = float(data.get('amount_cents')) / 100.0
+                except Exception:
+                    pass
+        return data
+
 
 @budget_agent.tool_plain
 def add_commitment(input: AddCommitmentInput):
-    """Add a recurring commitment (e.g., rent, mortgage, utilities). Amount in EUR, stored as integer cents. Defaults: MONTHLY, AS PREV_BUSINESS_DAY shift is applied by forecast engine."""
+    """Add a recurring commitment (e.g., rent, mortgage, utilities). Amount in EUR, stored as integer cents. Defaults: MONTHLY, AS PREV_BUSINESS_DAY shift is applied by forecast engine.
+
+    Accepts amount_eur, or amount, or amount_cents; also accepts account_id (local int), account_uuid (YNAB UUID), or account_name.
+    """
     dbp = _default_db_path()
+    if input.amount_eur is None:
+        return {"error": "amount_eur_missing", "hint": "Provide amount_eur (e.g., 1200.00) or 'amount' or 'amount_cents'."}
     amt_cents = int(round(float(input.amount_eur) * 100))
     # Resolve account: supports local int id, YNAB UUID, or account name
     acct_id: int | None = None
