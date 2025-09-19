@@ -267,68 +267,7 @@
   <body>
     <script>window.APP_BASE = '{{ request.url_for("index") }}'.replace(/\/$/, '');</script>
     <script src="{{ request.url_for('static', path='sidebar.js') }}"></script>
-        <div class="topbar">
-            <button
-                id="sidebar-toggle"
-                class="menu-btn"
-                aria-label="Toggle menu"
-                aria-controls="sidebar"
-                aria-expanded="false"
-            >
-                ☰
-            </button>
-            <div class="title">Budget Buddy</div>
-        </div>
-        <div id="sidebar">
-            <h2>Reports</h2>
-            <button onclick="window.open('{{ request.url_for('overview') }}', '_blank')">
-                📊 Overview
-            </button>
-            <button onclick="window.open('{{ request.url_for('get_budget_health') }}', '_blank')">
-                📊 Budget Health Report
-            </button>
-            <button onclick="window.open('{{ request.url_for('get_subscriptions_report') }}', '_blank')">
-                🔄 Subscriptions Report
-            </button>
-            <button
-                onclick="window.open('{{ request.url_for('get_subscriptions_rest_of_month_report') }}', '_blank')"
-            >
-                📅 Rest of This Month
-            </button>
-            <button onclick="window.location.href='{{ request.url_for('view_unmatched') }}'">
-                🧩 Unmatched Transactions
-            </button>
-            <h2>Quick Prompts</h2>
-            <button
-                onclick="setPrompt('What are my most recent transactions?')"
-            >
-                Most recent transactions
-            </button>
-            <button onclick="setPrompt('Health check on my budget')">
-                Health check
-            </button>
-            <button onclick="setPrompt('Which categories are overspent?')">
-                Overspent categories
-            </button>
-            <button onclick="setPrompt('Any upcoming scheduled transactions?')">
-                Upcoming transactions
-            </button>
-            <h2>Reset session</h2>
-            <button onclick="startNewSession()">🧼 New Session</button>
-            <h2>Export chat</h2>
-            <button onclick="window.print()">🖨️ Export as PDF</button>
-            <h2>Receipts</h2>
-            <button onclick="window.location.href='{{ request.url_for('view_uploads') }}'">
-                📂 View Uploaded Receipts
-            </button>
-
-            <h2>Voice Output</h2>
-            <h3>(Under Development)</h3>
-            <button id="toggle-voice-button" onclick="toggleVoiceOutput()">
-                🔈 Voice Output: OFF
-            </button>
-        </div>
-        <div id="sidebar-backdrop" class="backdrop" aria-hidden="true"></div>
+        <!-- legacy static sidebar removed; dynamic sidebar is injected by sidebar.js -->
 
         <div id="main">
             <div class="desktop-toolbar">
