@@ -64,9 +64,8 @@ system_prompt = (
     "You have full access to the user's budget ID — there is no need to ask them for it.\n"
 
     "To create an expected upcoming transaction (e.g., a monthly bill, recurring charge), use create_scheduled_transaction. "
-    "Supply account ID, date, and amount. Optionally include payee name or category. "
-    "Scheduled transactions must have dates no more than 7 days in the past and no more than 5 years into the future. "
-    "If unsure, default to the 1st of next month.\n"
+    "Supply account (local id or name OK), date, and amount. Optionally include payee name or category. "
+    "These are stored locally for forecasting; we do not push them to YNAB. If unsure, default to the 1st of next month.\n"
 
     "You can get all scheduled transactions with get_all_scheduled_transactions.\n"
 
@@ -75,7 +74,8 @@ system_prompt = (
 
     "If the user asks about overspending, overbudgeting, or mentions 'where am I overspending', call get_overspent_categories.\n"
     "If the user mentions modifying or canceling a scheduled payment, use update_scheduled_transaction or delete_scheduled_transaction as appropriate.\n"
-    "If the user wants to log a real-world transaction, use create_transaction, using today's date if not otherwise specified.\n"
+    "If the user wants to log a real-world transaction, use create_transaction, using today's date if not otherwise specified. "
+    "This stores the transaction locally only; YNAB is used only for read/sync.\n"
     "If the user wants to delete a real transaction, use delete_transaction.\n"
 
     'If the user mentions saving for something or setting a target goal (e.g., "save €500 for vacation"), call update_category.\n'
@@ -728,23 +728,43 @@ class GetAllScheduledTransactionsInput(BaseModel):
 
 @budget_agent.tool_plain
 def get_all_scheduled_transactions(input: GetAllScheduledTransactionsInput):
-    """Retrieve a list of all scheduled transactions from the budget.  Useful to see upcoming costs"""
-    logger.info(f"[TOOL] get_all_scheduled_transactions called with budget_id={BUDGET_ID}")
-    return {
-        "status": "Checking scheduled transactions...",
-        "data": client.slim_scheduled_transactions_text(client.get_scheduled_transactions(BUDGET_ID))
-    }
+    """List locally stored upcoming items (commitments + key events) for upcoming costs."""
+    logger.info("[TOOL] get_all_scheduled_transactions (local)")
+    dbp = _default_db_path()
+    items: list[str] = []
+    try:
+        with sqlite3.connect(dbp) as conn:
+            conn.row_factory = sqlite3.Row
+            # Commitments
+            for r in conn.execute(
+                "SELECT id, name, amount_cents, due_rule, next_due_date FROM commitments ORDER BY name, id"
+            ):
+                amt = int(r["amount_cents"]) if r["amount_cents"] is not None else 0
+                items.append(
+                    f"[commitment #{int(r['id'])}] {r['name']} — {amt/100:.2f} due_rule={r['due_rule']} next_due={r['next_due_date'] or '—'}"
+                )
+            # Key spend events
+            for r in conn.execute(
+                "SELECT id, name, event_date, repeat_rule, planned_amount_cents FROM key_spend_events ORDER BY date(event_date), id"
+            ):
+                amt = int(r["planned_amount_cents"]) if r["planned_amount_cents"] is not None else 0
+                items.append(
+                    f"[key_event #{int(r['id'])}] {r['name']} — {amt/100:.2f} on {r['event_date']} repeat={r['repeat_rule'] or 'ONE_OFF'}"
+                )
+    except Exception as e:
+        logger.error(f"Failed to read local scheduled items: {e}")
+        return {"error": "Unable to read local scheduled items"}
+    text = "\n".join(items) if items else "No local scheduled items yet."
+    return {"status": "ok", "data": text}
 
 class CreateScheduledTransactionInput(BaseModel):
-    account_id: str
+    account_id: int | str | None = None  # local id or name preferred; UUID tolerated but not required
     var_date: date
-    amount_eur: float  # now type-safe, thanks to validator
-    frequency: str = "monthly"
-    payee_id: Optional[str] = None
+    amount_eur: float
+    frequency: str = "monthly"  # monthly|weekly|yearly|biweekly|one_off
     payee_name: Optional[str] = None
-    category_id: Optional[str] = None
+    category_id: Optional[int] = None
     memo: Optional[str] = None
-    flag_color: Optional[str] = None
 
     @field_validator('amount_eur', mode='before')
     @classmethod
@@ -760,65 +780,111 @@ class CreateScheduledTransactionInput(BaseModel):
 
 @budget_agent.tool_plain
 def create_scheduled_transaction(input: CreateScheduledTransactionInput):
-    """Create a scheduled transaction for a future recurring payment or event. Frequency, amount, date and account are required."""
-    logger.info(f"[TOOL] Creating scheduled transaction on account {input.account_id} for €{input.amount_eur} on {input.var_date}")
-
-    amount_milliunits = int(input.amount_eur * 1000)
-    
-    # Map string frequency to enum value
-    frequency_map = {
-        "monthly": ScheduledTransactionFrequency.MONTHLY,
-        "weekly": ScheduledTransactionFrequency.WEEKLY,
-        "yearly": ScheduledTransactionFrequency.YEARLY,
-        "every_other_month": ScheduledTransactionFrequency.EVERYOTHERMONTH,
-        "every_other_week": ScheduledTransactionFrequency.EVERYOTHERWEEK,
-        "every_4_weeks": ScheduledTransactionFrequency.EVERY4WEEKS,
-        "twice_a_month": ScheduledTransactionFrequency.TWICEAMONTH,
-        "daily": ScheduledTransactionFrequency.DAILY,
-        "never": ScheduledTransactionFrequency.NEVER
-    }
-    
-    # Default to monthly if not found
-    frequency_enum = frequency_map.get(input.frequency.lower(), ScheduledTransactionFrequency.MONTHLY)
-    # Handle flag color enum conversion
-    flag_color_enum = None
-    if input.flag_color:
-        # Common flag colors in YNAB are: red, orange, yellow, green, blue, purple
-        flag_color_map = {
-            "red": TransactionFlagColor.RED,
-            "orange": TransactionFlagColor.ORANGE,
-            "yellow": TransactionFlagColor.YELLOW,
-            "green": TransactionFlagColor.GREEN,
-            "blue": TransactionFlagColor.BLUE,
-            "purple": TransactionFlagColor.PURPLE
-        }
-        flag_color_enum = flag_color_map.get(input.flag_color.lower())
-    
-    detail = SaveScheduledTransaction(
-        account_id=input.account_id,
-        date=input.var_date,
-        amount=amount_milliunits,
-        payee_id=input.payee_id,
-        payee_name=input.payee_name,
-        category_id=input.category_id,
-        memo=input.memo,
-        flag_color=flag_color_enum,
-        frequency=frequency_enum
+    """Create a local scheduled item for forecasting. We do NOT push to YNAB."""
+    logger.info(
+        f"[TOOL] create_scheduled_transaction (local) account={input.account_id} amount€={input.amount_eur} date={input.var_date} freq={input.frequency}"
     )
-    wrapper = PostScheduledTransactionWrapper(scheduled_transaction=detail)
-    try:
-        response: Any = client.create_scheduled_transaction(BUDGET_ID, wrapper)
-    except BadRequestException as e:
-        logger.warning(f"[TOOL ERROR] YNAB rejected scheduled transaction: {e}")
-        logger.warning(f"[TOOL ERROR] Payload was: {wrapper.to_dict()}")
-        return {
-    "status": "Attempt to create scheduled transaction failed.",
-    "error": "YNAB rejected the scheduled transaction — the date may be out of range. Please confirm the date is no more than 7 days in the past and not more than 5 years into the future."
-}
-    return {
-    "status": "Scheduled transaction created successfully!",
-    "data": response.to_dict() if hasattr(response, 'to_dict') else response
-} 
+    dbp = _default_db_path()
+    amount_cents = int(round(float(input.amount_eur) * 100))
+
+    # Resolve account: prefer explicit local int id; else fall back to first active account; account is optional for key events
+    acct_id: int | None = None
+    with sqlite3.connect(dbp) as conn:
+        conn.row_factory = sqlite3.Row
+        if isinstance(input.account_id, int):
+            acct_id = int(input.account_id)
+        elif isinstance(input.account_id, str):
+            # Try treat as local name
+            row = conn.execute("SELECT id FROM accounts WHERE name = ?", (input.account_id.strip(),)).fetchone()
+            if row:
+                acct_id = int(row["id"])  # else leave None for key_event insert
+        if acct_id is None:
+            # Fallback: first active account
+            row = conn.execute("SELECT id FROM accounts WHERE is_active = 1 ORDER BY id LIMIT 1").fetchone()
+            acct_id = int(row["id"]) if row else None
+
+        # Map frequencies to existing local concepts
+        freq = (input.frequency or "monthly").strip().lower()
+        commit_rules = {
+            "monthly": "MONTHLY",
+            "weekly": "WEEKLY",
+            "yearly": "ANNUAL",
+            "biweekly": "BIWEEKLY",
+        }
+        if freq in commit_rules and acct_id is not None:
+            cur = conn.execute(
+                """
+                INSERT INTO commitments(name, amount_cents, due_rule, next_due_date, priority, account_id, flexible_window_days, category_id, type)
+                VALUES (?,?,?,?,?,?,?,?,?)
+                """,
+                (
+                    input.payee_name or "Scheduled Item",
+                    amount_cents,
+                    commit_rules[freq],
+                    input.var_date.isoformat(),
+                    1,
+                    int(acct_id),
+                    0,
+                    input.category_id,
+                    "bill",
+                ),
+            )
+            new_id = int(cur.lastrowid)
+            row = conn.execute(
+                "SELECT id, name, amount_cents, due_rule, next_due_date, account_id FROM commitments WHERE id = ?",
+                (new_id,),
+            ).fetchone()
+            return {
+                "status": "saved_local_commitment",
+                "commitment": {
+                    "id": int(row["id"]),
+                    "name": row["name"],
+                    "amount_cents": int(row["amount_cents"]),
+                    "due_rule": row["due_rule"],
+                    "next_due_date": row["next_due_date"],
+                    "account_id": int(row["account_id"]),
+                },
+            }
+        else:
+            # Store as a key event (one-off or unsupported cadence)
+            repeat = "ONE_OFF"
+            if freq in ("one_off", "never"):
+                repeat = "ONE_OFF"
+            elif freq in ("weekly", "biweekly", "monthly", "yearly"):
+                # If we got here, no account id available; store as key event with repeat
+                repeat = commit_rules.get(freq, "ONE_OFF")  # type: ignore[arg-type]
+            cur = conn.execute(
+                """
+                INSERT INTO key_spend_events(name, event_date, repeat_rule, planned_amount_cents, category_id, lead_time_days, shift_policy, account_id)
+                VALUES (?,?,?,?,?,?,?,?)
+                """,
+                (
+                    input.payee_name or "Scheduled Item",
+                    input.var_date.isoformat(),
+                    repeat,
+                    amount_cents,
+                    input.category_id,
+                    None,
+                    "AS_SCHEDULED",
+                    acct_id,
+                ),
+            )
+            new_id = int(cur.lastrowid)
+            row = conn.execute(
+                "SELECT id, name, event_date, repeat_rule, planned_amount_cents, account_id FROM key_spend_events WHERE id = ?",
+                (new_id,),
+            ).fetchone()
+            return {
+                "status": "saved_local_key_event",
+                "key_event": {
+                    "id": int(row["id"]),
+                    "name": row["name"],
+                    "event_date": row["event_date"],
+                    "repeat_rule": row["repeat_rule"],
+                    "planned_amount_cents": int(row["planned_amount_cents"]) if row["planned_amount_cents"] is not None else None,
+                    "account_id": int(row["account_id"]) if row["account_id"] is not None else None,
+                },
+            }
 
 class GetOverspentCategoriesInput(BaseModel):
     budget_id: str
@@ -846,7 +912,7 @@ def get_overspent_categories(input: GetOverspentCategoriesInput):
     }
 
 class UpdateScheduledTransactionInput(BaseModel):
-    account_id: str
+    account_id: int | str | None = None
     scheduled_transaction_id: str
     amount_eur: Optional[float] = None
     memo: Optional[str] = None
@@ -854,49 +920,58 @@ class UpdateScheduledTransactionInput(BaseModel):
 
 @budget_agent.tool_plain
 def update_scheduled_transaction(input: UpdateScheduledTransactionInput):
-    """Update amount, memo, or date for an existing scheduled transaction. Account ID (uid, not account name) is required """
-    logger.info(f"[TOOL] update_scheduled_transaction called for ID {input.scheduled_transaction_id}")
-
+    """Update local scheduled item (commitment or key event) by id. Does not call YNAB."""
+    logger.info(f"[TOOL] update_scheduled_transaction (local) id={input.scheduled_transaction_id}")
     try:
-        from ynab.models.put_scheduled_transaction_wrapper import PutScheduledTransactionWrapper
-        from ynab.models.save_scheduled_transaction import SaveScheduledTransaction
+        target_id = int(str(input.scheduled_transaction_id).strip())
+    except Exception:
+        return {"error": "scheduled_transaction_id must be an integer for local updates"}
 
-        kwargs = {}
-        if input.account_id is None:
-            return {"error": "the account ID, a UID, not account name, is required"}
-        kwargs['account_id'] = input.account_id
-        if input.amount_eur is not None:
-            kwargs['amount'] = int(input.amount_eur * 1000)
+    if input.amount_eur is None and input.var_date is None and input.memo is None:
+        return {"error": "No fields provided to update. Specify amount or date."}
 
-        if input.memo is not None:
-            kwargs['memo'] = input.memo
+    dbp = _default_db_path()
+    amount_cents = None if input.amount_eur is None else int(round(float(input.amount_eur) * 100))
+    with sqlite3.connect(dbp) as conn:
+        # Try commitments first
+        cur = conn.execute("SELECT id FROM commitments WHERE id = ?", (target_id,))
+        row = cur.fetchone()
+        if row:
+            sets = []
+            params: list = []
+            if amount_cents is not None:
+                sets.append("amount_cents = ?")
+                params.append(amount_cents)
+            if input.var_date is not None:
+                sets.append("next_due_date = ?")
+                params.append(input.var_date.isoformat())
+            if not sets:
+                return {"error": "Nothing to update for commitment"}
+            params.append(target_id)
+            conn.execute(f"UPDATE commitments SET {', '.join(sets)} WHERE id = ?", params)
+            conn.commit()
+            return {"status": "updated_local_commitment", "id": target_id}
 
-        if input.var_date is not None:
-            if input.var_date > date.today() + timedelta(days=5*365):
-                return {
-                    "error": "Scheduled transaction date must be within 5 years from today."
-                }
-            kwargs['var_date'] = input.var_date.isoformat()
+        # Fallback: key events
+        cur = conn.execute("SELECT id FROM key_spend_events WHERE id = ?", (target_id,))
+        row = cur.fetchone()
+        if row:
+            sets = []
+            params = []
+            if amount_cents is not None:
+                sets.append("planned_amount_cents = ?")
+                params.append(amount_cents)
+            if input.var_date is not None:
+                sets.append("event_date = ?")
+                params.append(input.var_date.isoformat())
+            if not sets:
+                return {"error": "Nothing to update for key event"}
+            params.append(target_id)
+            conn.execute(f"UPDATE key_spend_events SET {', '.join(sets)} WHERE id = ?", params)
+            conn.commit()
+            return {"status": "updated_local_key_event", "id": target_id}
 
-        if not kwargs:
-            return {"error": "No fields provided to update. Specify amount, memo, or date."}
-
-        update_detail = SaveScheduledTransaction(**kwargs)
-        wrapper = PutScheduledTransactionWrapper(scheduled_transaction=update_detail)
-
-        updated = client.scheduled_transactions_api.update_scheduled_transaction(
-            BUDGET_ID,
-            input.scheduled_transaction_id,
-            wrapper
-        )
-
-        return {
-            "status": "Scheduled transaction updated successfully.",
-            "data": updated.to_dict()
-        }
-    except Exception as e:
-        logger.error(f"Failed to update scheduled transaction: {e}")
-        return {"error": "Unable to update the scheduled transaction."}
+    return {"error": "No local scheduled item found with that id"}
 
 
 
@@ -905,20 +980,26 @@ class DeleteScheduledTransactionInput(BaseModel):
 
 @budget_agent.tool_plain
 def delete_scheduled_transaction(input: DeleteScheduledTransactionInput):
-    """Delete an existing scheduled transaction."""
-    logger.info(f"[TOOL] delete_scheduled_transaction called for ID {input.scheduled_transaction_id}")
-
+    """Delete a local scheduled item (commitment or key event) by id."""
+    logger.info(f"[TOOL] delete_scheduled_transaction (local) id={input.scheduled_transaction_id}")
     try:
-        client.scheduled_transactions_api.delete_scheduled_transaction(BUDGET_ID, input.scheduled_transaction_id)
-        return {
-            "status": "Scheduled transaction deleted successfully."
-        }
-    except Exception as e:
-        logger.error(f"Failed to delete scheduled transaction: {e}")
-        return {"error": "Unable to delete the scheduled transaction."}
+        target_id = int(str(input.scheduled_transaction_id).strip())
+    except Exception:
+        return {"error": "scheduled_transaction_id must be an integer for local deletion"}
+    dbp = _default_db_path()
+    with sqlite3.connect(dbp) as conn:
+        cur = conn.execute("DELETE FROM commitments WHERE id = ?", (target_id,))
+        if cur.rowcount:
+            conn.commit()
+            return {"status": "deleted_local_commitment", "id": target_id}
+        cur = conn.execute("DELETE FROM key_spend_events WHERE id = ?", (target_id,))
+        if cur.rowcount:
+            conn.commit()
+            return {"status": "deleted_local_key_event", "id": target_id}
+    return {"error": "No local scheduled item found with that id"}
 
 class CreateTransactionInput(BaseModel):
-    account_id: str
+    account_id: int | str  # local id or name preferred; UUID tolerated
     date: date
     amount_eur: float
     payee_name: Optional[str] = None
@@ -927,43 +1008,52 @@ class CreateTransactionInput(BaseModel):
 
 @budget_agent.tool_plain
 def create_transaction(input: CreateTransactionInput):
-    """Log a new real-world transaction into the budget. Requires account_id UUID, not account name."""
-    logger.info(f"[TOOL] create_transaction called for account {input.account_id} on {input.date}")
+    """Record a real-world transaction locally (no YNAB write)."""
+    logger.info(f"[TOOL] create_transaction (local) account={input.account_id} on {input.date}")
+    dbp = _default_db_path()
+    # Resolve local account id
+    acct_id: int | None = None
+    with sqlite3.connect(dbp) as conn:
+        conn.row_factory = sqlite3.Row
+        if isinstance(input.account_id, int):
+            acct_id = int(input.account_id)
+        elif isinstance(input.account_id, str):
+            # Prefer match by name in local DB
+            row = conn.execute("SELECT id FROM accounts WHERE name = ?", (input.account_id.strip(),)).fetchone()
+            if row:
+                acct_id = int(row["id"])  # else leave None
+        if acct_id is None:
+            row = conn.execute("SELECT id FROM accounts WHERE is_active = 1 ORDER BY id LIMIT 1").fetchone()
+            acct_id = int(row["id"]) if row else None
+        if acct_id is None:
+            return {"error": "No local account available; create an account first"}
 
-    # 🔥 Validate and auto-fix account_id if needed
-    if "-" not in input.account_id:
-        logger.warning("[TOOL] Provided account_id does not look like a UUID. Attempting lookup...")
-        accounts = client.get_accounts(BUDGET_ID)
-        matching_account = next((acct for acct in accounts if acct.get("name") == input.account_id), None) # type: ignore
-        if matching_account:
-            input.account_id = matching_account["id"] # type: ignore
-            logger.info(f"[TOOL] Matched account name to UUID: {input.account_id}")
-        else:
-            logger.error(f"[TOOL ERROR] No account found matching name {input.account_id}")
-            return {"error": f"No account found matching name {input.account_id}. Please check your account names."}
-
-    amount_milliunits = int(input.amount_eur * 1000)
-
-    transaction = {
-        "transaction": {
-            "account_id": input.account_id,
-            "date": input.date.isoformat(),
-            "amount": amount_milliunits,
-            "payee_name": input.payee_name,
-            "memo": input.memo,
-            "cleared": input.cleared
-        }
-    }
-
-    try:
-        created = client.transactions_api.create_transaction(BUDGET_ID, transaction) #type: ignore
-        return {
-            "status": "Transaction created successfully.",
-            "data": created.to_dict()
-        }
-    except Exception as e:
-        logger.error(f"Failed to create transaction: {e}")
-        return {"error": "Unable to create the transaction."}
+        # Store as local transaction in SoT DB (transactions table uses integer cents; negative = outflow)
+        amount_cents = int(round(float(input.amount_eur) * 100))
+        # Heuristic: treat positive amounts as outflow (subtract), following agent usage
+        if amount_cents > 0:
+            amount_cents = -abs(amount_cents)
+        import uuid
+        idem = f"local-{uuid.uuid4()}"
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO transactions(
+                idempotency_key, account_id, posted_at, amount_cents, payee, memo, source, is_cleared
+            ) VALUES (?,?,?,?,?,?,?,?)
+            """,
+            (
+                idem,
+                int(acct_id),
+                input.date.isoformat(),
+                amount_cents,
+                input.payee_name,
+                input.memo,
+                "manual",
+                1 if str(input.cleared).lower().strip() == "cleared" else 0,
+            ),
+        )
+        conn.commit()
+        return {"status": "saved_local_transaction", "idempotency_key": idem}
 
 
 
