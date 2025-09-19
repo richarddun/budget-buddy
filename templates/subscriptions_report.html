@@ -26,7 +26,10 @@
     </style>
   </head>
   <body>
+    <script>window.APP_BASE = '{{ request.url_for("index") }}'.replace(/\/$/, '');</script>
+    <script src="/static/sidebar.js"></script>
     <div class="container">
+      <a class="back-link" href="{{ request.url_for('index') }}" style="display:inline-block; margin-bottom: 10px; padding: 8px 12px; background: #007bff; color: white; text-decoration: none; border-radius: 6px;">← Back to Chat</a>
       <div class="header">
         <h1>🔄 Subscriptions & Scheduled Payments</h1>
         <p>Detected recurring payments based on amount similarity (±€3) over 2+ months</p>
@@ -101,4 +104,3 @@
     </div>
   </body>
   </html>
-

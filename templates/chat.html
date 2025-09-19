@@ -1,6 +1,6 @@
 <!doctype html>
 <html>
-    <head>
+  <head>
         <title>AI Budgeting Assistant (Beta)</title>
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
         <script src="https://unpkg.com/htmx.org@1.9.2"></script>
@@ -263,8 +263,10 @@
                 }
             }
         </style>
-    </head>
-    <body>
+  </head>
+  <body>
+    <script>window.APP_BASE = '{{ request.url_for("index") }}'.replace(/\/$/, '');</script>
+    <script src="/static/sidebar.js"></script>
         <div class="topbar">
             <button
                 id="sidebar-toggle"

@@ -55,6 +55,8 @@
     </style>
   </head>
   <body>
+    <script>window.APP_BASE = '{{ request.url_for("index") }}'.replace(/\/$/, '');</script>
+    <script src="/static/sidebar.js"></script>
     <div class="container">
       <div class="header">
         <h1 style="margin:0">📊 Budget Health</h1>
