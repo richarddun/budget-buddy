@@ -1,0 +1,178 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Commitments</title>
+    {% if csrf_token %}<meta name="csrf-token" content="{{ csrf_token }}">{% endif %}
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <style>
+      body { margin:0; font-family: system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, 'Helvetica Neue', Arial; background:#0f172a; color:#e5e7eb; }
+      .container { max-width: 1100px; margin: 0 auto; padding: 20px; }
+      .header { display:flex; justify-content:space-between; align-items:center; margin-bottom: 12px; }
+      .back { display:inline-block; padding:8px 12px; border-radius:6px; background:#3b82f6; color:#06142b; text-decoration:none; font-weight:600; }
+      .panel { background:#111827; border-radius:10px; padding:16px; margin-bottom:16px; border:1px solid #1f2937; }
+      .section-title { font-size:16px; font-weight:700; margin:0 0 10px 0; }
+      input, select { background:#0b1222; color:#e5e7eb; border:1px solid #374151; border-radius:6px; padding:6px 8px; }
+      table { width:100%; border-collapse:collapse; }
+      th, td { border-bottom:1px solid #1f2937; padding:8px; text-align:left; }
+      .muted { color:#9ca3af; font-size:12px; }
+      .neg { color:#fecaca; }
+      .pos { color:#86efac; }
+      .btn { background:#2563eb; color:#fff; border:none; border-radius:6px; padding:8px 12px; cursor:pointer }
+      .grid { display:grid; grid-template-columns: repeat(auto-fit, minmax(220px,1fr)); gap: 8px; }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <div class="header">
+        <h1 style="margin:0">📑 Commitments</h1>
+        <a class="back" href="{{ request.url_for('index') }}">← Back to Chat</a>
+      </div>
+
+      <div class="panel">
+        <div class="section-title">Totals</div>
+        <div class="grid">
+          <div><div class="muted">Raw Total</div><div id="total_raw">—</div></div>
+          <div><div class="muted">Monthly Equivalent</div><div id="total_meq">—</div></div>
+          <div><div class="muted">Count</div><div id="total_count">—</div></div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="section-title">Add Commitment</div>
+        <div style="display:flex; gap:8px; align-items:flex-end; flex-wrap:wrap">
+          <label>Name<br><input id="c-name" placeholder="e.g., Virgin Media Internet"></label>
+          <label>Amount (EUR)<br><input id="c-amount" type="number" step="0.01" placeholder="64.99"></label>
+          <label>Due Rule<br>
+            <select id="c-rule">
+              <option>MONTHLY</option>
+              <option>WEEKLY</option>
+              <option>BIWEEKLY</option>
+              <option>ANNUAL</option>
+            </select>
+          </label>
+          <label>Next Due<br><input id="c-next" type="date"></label>
+          <label>Account ID<br><input id="c-acct" type="number" placeholder="1"></label>
+          <button id="btn-add" class="btn" type="button">Add</button>
+          <span id="add-status" class="muted"></span>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="section-title">All Commitments</div>
+        <div style="overflow:auto">
+          <table id="tbl">
+            <thead>
+              <tr>
+                <th style="width:60px">ID</th>
+                <th>Name</th>
+                <th style="width:130px">Amount</th>
+                <th style="width:130px">Monthly Eqv.</th>
+                <th style="width:130px">Due Rule</th>
+                <th style="width:140px">Next Due</th>
+                <th style="width:90px">Account</th>
+                <th style="width:100px">Type</th>
+                <th style="width:160px">Actions</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      function fmtCents(c) { const s = c<0?'-':''; const a=Math.abs(c); return s + ({{ currency_symbol|tojson|safe }} || '€') + (a/100).toFixed(2); }
+      async function fetchJSON(u, opts) { const r = await fetch(u, opts); if (!r.ok) throw new Error('HTTP '+r.status); return r.json(); }
+      function base() { return '{{ request.url_for("index") }}'.replace(/\/$/, ''); }
+
+      const COMMITMENTS = new Map();
+
+      async function loadList() {
+        const j = await fetchJSON(base() + '/api/commitments');
+        document.getElementById('total_count').textContent = j.count || 0;
+        document.getElementById('total_raw').textContent = fmtCents(j.total_cents||0);
+        document.getElementById('total_meq').textContent = fmtCents(j.monthly_equivalent_cents||0);
+
+        const tbody = document.querySelector('#tbl tbody'); tbody.innerHTML = '';
+        COMMITMENTS.clear();
+        for (const it of (j.items||[])) {
+          COMMITMENTS.set(it.id, it);
+          const tr = document.createElement('tr');
+          tr.innerHTML = `
+            <td>${it.id}</td>
+            <td>${(it.name||'').replace(/</g,'&lt;')}</td>
+            <td style="text-align:right">${fmtCents(it.amount_cents||0)}</td>
+            <td style="text-align:right">${fmtCents(it.monthly_equivalent_cents||0)}</td>
+            <td>${it.due_rule||''}</td>
+            <td>${it.next_due_date||'—'}</td>
+            <td>${it.account_id ?? '—'}</td>
+            <td>${it.type||''}</td>
+            <td>
+              <button class="btn" style="background:#10b981" onclick="editCommitment(${it.id})">Edit</button>
+              <button class="btn" style="background:#ef4444" onclick="deleteCommitment(${it.id})">Delete</button>
+            </td>
+          `;
+          tbody.appendChild(tr);
+        }
+      }
+
+      async function addCommitment() {
+        const name = document.getElementById('c-name').value.trim();
+        const amount = parseFloat(document.getElementById('c-amount').value);
+        const rule = document.getElementById('c-rule').value.trim();
+        const nextd = document.getElementById('c-next').value || null;
+        const acct = document.getElementById('c-acct').value;
+        const body = { name, amount_eur: isFinite(amount)? amount : undefined, due_rule: rule, next_due_date: nextd, account_id: acct? parseInt(acct,10): null, type: 'bill' };
+        try {
+          const token = document.querySelector('meta[name="csrf-token"]')?.content;
+          const j = await fetchJSON(base() + '/api/commitments', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', ...(token? {'X-CSRF-Token': token} : {}) },
+            body: JSON.stringify(body)
+          });
+          document.getElementById('add-status').textContent = 'Saved';
+          await loadList();
+        } catch (e) {
+          document.getElementById('add-status').textContent = 'Failed';
+        }
+      }
+
+      async function deleteCommitment(id) {
+        if (!confirm('Delete commitment #' + id + '?')) return;
+        try {
+          const token = document.querySelector('meta[name="csrf-token"]')?.content;
+          await fetchJSON(base() + '/api/commitments/' + id, { method:'DELETE', headers: token? { 'X-CSRF-Token': token } : {} });
+          await loadList();
+        } catch (e) {
+          alert('Delete failed');
+        }
+      }
+
+      async function editCommitment(id) {
+        const it = COMMITMENTS.get(id);
+        if (!it) return;
+        const name = prompt('Name', it.name||''); if (name === null) return;
+        const amountStr = prompt('Amount (EUR)', ((it.amount_cents||0)/100).toFixed(2)); if (amountStr === null) return;
+        const rule = prompt('Due Rule (MONTHLY/WEEKLY/BIWEEKLY/ANNUAL)', it.due_rule||'MONTHLY'); if (rule === null) return;
+        const nextd = prompt('Next Due (YYYY-MM-DD or blank)', it.next_due_date||''); if (nextd === null) return;
+        const acct = prompt('Account ID (blank to keep)', it.account_id!=null? String(it.account_id):''); if (acct === null) return;
+        const body = { name: name.trim(), amount_eur: parseFloat(amountStr), due_rule: (rule||'').toUpperCase() };
+        if (nextd.trim() === '') body.next_due_date = null; else body.next_due_date = nextd.trim();
+        if (acct.trim() === '') {} else body.account_id = parseInt(acct,10);
+        try {
+          const token = document.querySelector('meta[name="csrf-token"]')?.content;
+          await fetchJSON(base() + '/api/commitments/' + id, { method:'PUT', headers: { 'Content-Type': 'application/json', ...(token? {'X-CSRF-Token': token} : {}) }, body: JSON.stringify(body) });
+          await loadList();
+        } catch (e) {
+          alert('Update failed');
+        }
+      }
+
+      (async () => {
+        await loadList();
+        document.getElementById('btn-add').addEventListener('click', addCommitment);
+      })();
+    </script>
+  </body>
+  </html>

@@ -116,6 +116,10 @@ try:
     from api.calendar_export import router as calendar_export_router
 except Exception:
     calendar_export_router = None
+try:
+    from api.commitments import router as commitments_router
+except Exception:
+    commitments_router = None
 
 # Include API routers at import time for conventional startup
 if forecast_router is not None:
@@ -136,6 +140,8 @@ if accounts_router is not None:
     app.include_router(accounts_router)
 if transactions_router is not None:
     app.include_router(transactions_router)
+if commitments_router is not None:
+    app.include_router(commitments_router)
 
 # --- File upload Setup ---
 UPLOAD_DIR = Path("uploaded_receipts")
@@ -498,6 +504,12 @@ async def transactions_browser(request: Request):
     """Simple transaction browser to verify local data."""
     csrf_token = os.getenv("CSRF_TOKEN") or None
     return templates.TemplateResponse("transactions.html", {"request": request, "csrf_token": csrf_token, "currency_symbol": CURRENCY_SYMBOL})
+
+@app.get("/commitments", response_class=HTMLResponse)
+async def commitments_page(request: Request):
+    """Simple commitments dashboard with totals and list."""
+    csrf_token = os.getenv("CSRF_TOKEN") or None
+    return templates.TemplateResponse("commitments.html", {"request": request, "csrf_token": csrf_token, "currency_symbol": CURRENCY_SYMBOL})
 
 @app.get("/budgets")
 def get_budget():
