@@ -637,6 +637,8 @@
                 });
             // === 🎤 Voice Input Setup ===
             let recognition;
+            let isRecording = false;
+            let micButtonEl = null;
             if (
                 "webkitSpeechRecognition" in window ||
                 "SpeechRecognition" in window
@@ -649,7 +651,7 @@
                 recognition.interimResults = false;
 
                 function startVoiceInput() {
-                    recognition.start();
+                    try { recognition.start(); } catch (e) { /* ignore duplicate start */ }
                 }
 
                 recognition.onresult = function (event) {
@@ -660,8 +662,37 @@
                 };
 
                 recognition.onerror = function (event) {
-                    alert("recognition error");
                     console.error("Speech recognition error:", event.error);
+                    if (micButtonEl) {
+                        isRecording = false;
+                        micButtonEl.style.backgroundColor = "#555";
+                        micButtonEl.textContent = "🎤";
+                        micButtonEl.setAttribute("aria-pressed", "false");
+                        micButtonEl.setAttribute("aria-label", "Start voice input");
+                        micButtonEl.title = "Start voice input";
+                    }
+                };
+
+                recognition.onstart = function () {
+                    if (micButtonEl) {
+                        isRecording = true;
+                        micButtonEl.style.backgroundColor = "#dc2626"; // red-600
+                        micButtonEl.textContent = "● Recording — tap to finish";
+                        micButtonEl.setAttribute("aria-pressed", "true");
+                        micButtonEl.setAttribute("aria-label", "Recording… tap to finish");
+                        micButtonEl.title = "Recording… tap to finish";
+                    }
+                };
+
+                recognition.onend = function () {
+                    if (micButtonEl) {
+                        isRecording = false;
+                        micButtonEl.style.backgroundColor = "#555";
+                        micButtonEl.textContent = "🎤";
+                        micButtonEl.setAttribute("aria-pressed", "false");
+                        micButtonEl.setAttribute("aria-label", "Start voice input");
+                        micButtonEl.title = "Start voice input";
+                    }
                 };
             }
 
@@ -738,10 +769,25 @@
                 micButton.style.borderRadius = "4px";
                 micButton.style.color = "white";
                 micButton.style.cursor = "pointer";
+                micButton.setAttribute("aria-label", "Start voice input");
+                micButton.setAttribute("aria-pressed", "false");
+                micButton.title = "Start voice input";
+                micButtonEl = micButton;
 
                 micButton.onclick = () => {
                     if (recognition) {
-                        startVoiceInput();
+                        if (!isRecording) {
+                            startVoiceInput();
+                            // UI updates happen in onstart; but set immediate hint for slow browsers
+                            micButton.style.backgroundColor = "#dc2626";
+                            micButton.textContent = "● Recording — tap to finish";
+                            micButton.setAttribute("aria-pressed", "true");
+                            micButton.setAttribute("aria-label", "Recording… tap to finish");
+                            micButton.title = "Recording… tap to finish";
+                            isRecording = true;
+                        } else {
+                            try { recognition.stop(); } catch (e) { /* ignore */ }
+                        }
                     } else {
                         alert(
                             "Sorry, your browser does not support speech recognition.",
