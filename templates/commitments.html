@@ -30,6 +30,17 @@
       </div>
 
       <div class="panel">
+        <div class="section-title">Auth</div>
+        <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap">
+          <label>Admin Token
+            <input id="admin-token-input" placeholder="Paste token from /admin">
+          </label>
+          <button id="btn-save-token" class="btn" type="button">Save</button>
+          <span id="token-status" class="muted"></span>
+        </div>
+      </div>
+
+      <div class="panel">
         <div class="section-title">Totals</div>
         <div class="grid">
           <div><div class="muted">Raw Total</div><div id="total_raw">—</div></div>
@@ -52,7 +63,11 @@
             </select>
           </label>
           <label>Next Due<br><input id="c-next" type="date"></label>
-          <label>Account ID<br><input id="c-acct" type="number" placeholder="1"></label>
+          <label>Account<br>
+            <select id="c-acct-sel">
+              <option value="">— Select account —</option>
+            </select>
+          </label>
           <button id="btn-add" class="btn" type="button">Add</button>
           <span id="add-status" class="muted"></span>
         </div>
@@ -85,6 +100,15 @@
       function fmtCents(c) { const s = c<0?'-':''; const a=Math.abs(c); return s + ({{ currency_symbol|tojson|safe }} || '€') + (a/100).toFixed(2); }
       async function fetchJSON(u, opts) { const r = await fetch(u, opts); if (!r.ok) throw new Error('HTTP '+r.status); return r.json(); }
       function base() { return '{{ request.url_for("index") }}'.replace(/\/$/, ''); }
+      function getCSRF() { return document.querySelector('meta[name="csrf-token"]')?.content; }
+      function getAdminToken() { return window.localStorage.getItem('adminToken') || ''; }
+      function authHeaders(includeJSON=true) {
+        const h = {};
+        const csrf = getCSRF(); if (csrf) h['X-CSRF-Token'] = csrf;
+        const adm = getAdminToken(); if (adm) h['X-Admin-Token'] = adm; // server also accepts Bearer
+        if (includeJSON) h['Content-Type'] = 'application/json';
+        return h;
+      }
 
       const COMMITMENTS = new Map();
 
@@ -117,20 +141,31 @@
         }
       }
 
+      async function loadAccounts() {
+        try {
+          const j = await fetchJSON(base() + '/api/accounts');
+          const sel = document.getElementById('c-acct-sel');
+          sel.innerHTML = '<option value="">— Select account —</option>';
+          (j.accounts||[]).forEach(a => {
+            const o = document.createElement('option');
+            o.value = String(a.id);
+            o.textContent = a.name;
+            sel.appendChild(o);
+          });
+        } catch (e) {
+          // ignore
+        }
+      }
+
       async function addCommitment() {
         const name = document.getElementById('c-name').value.trim();
         const amount = parseFloat(document.getElementById('c-amount').value);
         const rule = document.getElementById('c-rule').value.trim();
         const nextd = document.getElementById('c-next').value || null;
-        const acct = document.getElementById('c-acct').value;
+        const acct = document.getElementById('c-acct-sel').value;
         const body = { name, amount_eur: isFinite(amount)? amount : undefined, due_rule: rule, next_due_date: nextd, account_id: acct? parseInt(acct,10): null, type: 'bill' };
         try {
-          const token = document.querySelector('meta[name="csrf-token"]')?.content;
-          const j = await fetchJSON(base() + '/api/commitments', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', ...(token? {'X-CSRF-Token': token} : {}) },
-            body: JSON.stringify(body)
-          });
+          const j = await fetchJSON(base() + '/api/commitments', { method: 'POST', headers: authHeaders(true), body: JSON.stringify(body) });
           document.getElementById('add-status').textContent = 'Saved';
           await loadList();
         } catch (e) {
@@ -141,8 +176,7 @@
       async function deleteCommitment(id) {
         if (!confirm('Delete commitment #' + id + '?')) return;
         try {
-          const token = document.querySelector('meta[name="csrf-token"]')?.content;
-          await fetchJSON(base() + '/api/commitments/' + id, { method:'DELETE', headers: token? { 'X-CSRF-Token': token } : {} });
+          await fetchJSON(base() + '/api/commitments/' + id, { method:'DELETE', headers: authHeaders(false) });
           await loadList();
         } catch (e) {
           alert('Delete failed');
@@ -161,8 +195,7 @@
         if (nextd.trim() === '') body.next_due_date = null; else body.next_due_date = nextd.trim();
         if (acct.trim() === '') {} else body.account_id = parseInt(acct,10);
         try {
-          const token = document.querySelector('meta[name="csrf-token"]')?.content;
-          await fetchJSON(base() + '/api/commitments/' + id, { method:'PUT', headers: { 'Content-Type': 'application/json', ...(token? {'X-CSRF-Token': token} : {}) }, body: JSON.stringify(body) });
+          await fetchJSON(base() + '/api/commitments/' + id, { method:'PUT', headers: authHeaders(true), body: JSON.stringify(body) });
           await loadList();
         } catch (e) {
           alert('Update failed');
@@ -170,6 +203,14 @@
       }
 
       (async () => {
+        // Prefill token from localStorage
+        document.getElementById('admin-token-input').value = getAdminToken();
+        document.getElementById('btn-save-token').addEventListener('click', () => {
+          const v = document.getElementById('admin-token-input').value.trim();
+          if (v) { window.localStorage.setItem('adminToken', v); document.getElementById('token-status').textContent = 'Saved'; }
+          else { window.localStorage.removeItem('adminToken'); document.getElementById('token-status').textContent = 'Cleared'; }
+        });
+        await loadAccounts();
         await loadList();
         document.getElementById('btn-add').addEventListener('click', addCommitment);
       })();
