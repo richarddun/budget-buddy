@@ -32,7 +32,7 @@
   </head>
   <body>
     <script>window.APP_BASE = '{{ request.url_for("index") }}'.replace(/\/$/, '');</script>
-    <script src="/static/sidebar.js"></script>
+    <script src="{{ request.url_for('static', path='sidebar.js') }}"></script>
     <div class="container">
       <div class="header">
         <h1 style="margin:0">Overview</h1>

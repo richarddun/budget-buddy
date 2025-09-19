@@ -14,7 +14,7 @@
   </head>
   <body>
     <script>window.APP_BASE = '{{ request.url_for("index") }}'.replace(/\/$/, '');</script>
-    <script src="/static/sidebar.js"></script>
+    <script src="{{ request.url_for('static', path='sidebar.js') }}"></script>
     <div><a class="back" href="{{ request.url_for('index') }}">⬅️ Back to Chat</a></div>
     <h1>📂 Uploaded Receipts</h1>
     {% if files %}

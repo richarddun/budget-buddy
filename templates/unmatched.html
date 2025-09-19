@@ -58,7 +58,7 @@
 </head>
 <body>
   <script>window.APP_BASE = '{{ request.url_for("index") }}'.replace(/\/$/, '');</script>
-  <script src="/static/sidebar.js"></script>
+  <script src="{{ request.url_for('static', path='sidebar.js') }}"></script>
   <h1>Unmatched Transactions</h1>
   <p class="muted">These transactions are currently mapped to the Holding category. Suggestions are based on payee rules and simple keyword matches. Accepting a suggestion will create a mapping for CSV category names.</p>
   <div id="list"></div>
