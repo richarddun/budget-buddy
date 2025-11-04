@@ -40,7 +40,7 @@
       'box-sizing:border-box',
       'z-index:999',
       'overflow:auto',
-      'display:none',
+      'display:block',
     ].join(';');
 
     const title = document.createElement('div');
