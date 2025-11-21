@@ -15,15 +15,15 @@
       { href: BASE + '/admin', label: '⚙️ Admin' },
     ];
 
-    // Insert back-to-chat link if missing on page
-    if (!document.querySelector('a.back')) {
+    // Insert back-to-chat link if missing on page, don't activate 'back to chat' on main chat page
+    /*if (!document.querySelector('a.back') && window.location.href.split('/').length == 5) {
       const back = document.createElement('a');
       back.href = BASE + '/';
       back.textContent = '← Back to Chat';
       back.className = 'back';
       back.style.cssText = 'display:inline-block;padding:8px 12px;border-radius:6px;background:#3b82f6;color:#06142b;text-decoration:none;font-weight:600;position:fixed;right:12px;top:12px;z-index:1000';
       document.body.appendChild(back);
-    }
+    }*/
 
     // Sidebar container
     const sb = document.createElement('nav');
@@ -40,7 +40,7 @@
       'box-sizing:border-box',
       'z-index:999',
       'overflow:auto',
-      'display:block',
+      'display:none',
     ].join(';');
 
     const title = document.createElement('div');
