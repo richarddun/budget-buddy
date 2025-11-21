@@ -140,7 +140,9 @@
                     height: 100vh;
                     overflow: hidden;
                 }
-
+                #title{
+                    margin-left: 30%;
+                }
                 .topbar,
                 .backdrop {
                     display: none !important;
@@ -270,7 +272,7 @@
         <!-- legacy static sidebar removed; dynamic sidebar is injected by sidebar.js -->
 
         <div id="main">
-            <h1>💬 AI Budgeting Assistant Chat</h1>
+            <span id="title"><h1>💬 AI Budgeting Assistant Chat</h1></span>
 
             <div id="chatbox" class="chatbox">
                 {% if digest %}
