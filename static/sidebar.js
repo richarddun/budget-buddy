@@ -70,7 +70,7 @@
     });
     document.body.appendChild(btn);
 
-    // Auto-show on large screens
+    /*// Auto-show on large screens
     function syncSidebar() {
       if (window.innerWidth >= 1100) {
         sb.style.display = 'block';
@@ -79,7 +79,7 @@
       }
     }
     window.addEventListener('resize', syncSidebar);
-    syncSidebar();
+    syncSidebar();*/
 
     // Add left margin to main container when sidebar is visible
     function adjustContentMargin() {
