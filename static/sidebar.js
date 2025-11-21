@@ -45,7 +45,7 @@
 
     const title = document.createElement('div');
     title.textContent = 'Budget Buddy';
-    title.style.cssText = 'font-weight:700;color:#e5e7eb;margin:6px 6px 10px 6px;';
+    title.style.cssText = 'margin-left:40px;font-weight:700;color:#e5e7eb;margin:6px 6px 10px 6px;';
     sb.appendChild(title);
 
     routes.forEach(r => {
