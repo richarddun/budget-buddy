@@ -4,15 +4,16 @@ PRAGMA foreign_keys = ON;
 -- Transaction splits: one payment can be split across multiple categories
 CREATE TABLE IF NOT EXISTS transaction_splits (
   id INTEGER PRIMARY KEY,
-  idempotency_key TEXT NOT NULL,            -- References transactions.idempotency_key
+  transaction_idempotency_key TEXT NOT NULL REFERENCES transactions(idempotency_key),
   category_id INTEGER NOT NULL REFERENCES categories(id),
-  amount_cents INTEGER NOT NULL,            -- Always positive (split amount)
+  amount_cents INTEGER NOT NULL,
   memo TEXT,
-  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT ''
 );
 
-CREATE INDEX IF NOT EXISTS idx_splits_idempotency_key
-  ON transaction_splits(idempotency_key);
+CREATE INDEX IF NOT EXISTS idx_splits_transaction_key
+  ON transaction_splits(transaction_idempotency_key);
 
 -- Constraint: sum of split amounts must not exceed the parent transaction's absolute amount
 -- (Enforced at application layer since SQLite doesn't support CHECK subqueries)
