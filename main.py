@@ -533,7 +533,7 @@ async def transaction_new(request: Request):
     _require_session_dep(request)
     """Quick-add a single transaction via a dedicated form page."""
     csrf_token = os.getenv("CSRF_TOKEN") or None
-    return templates.TemplateResponse("transaction_new.html", {"request": request, "csrf_token": csrf_token, "currency_symbol": "€"})
+    return templates.TemplateResponse(request, "transaction_new.html", {"csrf_token": csrf_token, "currency_symbol": "€"})
 
 @app.get("/categories", response_class=HTMLResponse)
 async def categories_page(request: Request):
