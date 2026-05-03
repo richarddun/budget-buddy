@@ -26,21 +26,17 @@ def build_parser() -> argparse.ArgumentParser:
     ingest_parser = subparsers.add_parser("ingest", help="Ingestion tasks")
     ingest_sub = ingest_parser.add_subparsers(dest="ingest_command")
 
-    # ingest ynab
-    ynab_parser = ingest_sub.add_parser("ynab", help="Ingest from YNAB")
-    ynab_mode = ynab_parser.add_mutually_exclusive_group(required=True)
-    ynab_mode.add_argument("--delta", action="store_true", help="Run delta sync")
-    ynab_mode.add_argument("--backfill", action="store_true", help="Run backfill")
-    ynab_parser.add_argument("--months", type=int, default=1, help="Backfill horizon in months")
-    ynab_parser.add_argument("--from-csv", dest="from_csv", type=Path, help="Import from YNAB CSV export")
-    ynab_parser.add_argument(
+    # ingest csv
+    csv_parser = ingest_sub.add_parser("csv", help="Import from CSV")
+    csv_parser.add_argument("csv_path", type=Path, help="Path to CSV file")
+    csv_parser.add_argument(
         "--account",
         dest="csv_account",
         type=str,
         default=None,
         help="Override account name for CSV rows",
     )
-    _add_common_db_arg(ynab_parser)
+    _add_common_db_arg(csv_parser)
 
     # categories group
     cat_parser = subparsers.add_parser("categories", help="Category sync and mapping")
@@ -64,23 +60,6 @@ def build_parser() -> argparse.ArgumentParser:
         help="Purge the DB file, re-create schema, and optionally repopulate",
     )
     _add_common_db_arg(reset_parser)
-    reset_mode = reset_parser.add_mutually_exclusive_group()
-    reset_mode.add_argument(
-        "--delta",
-        action="store_true",
-        help="After reset, run delta sync (default: backfill)",
-    )
-    reset_mode.add_argument(
-        "--backfill",
-        action="store_true",
-        help="After reset, run backfill (default)",
-    )
-    reset_parser.add_argument(
-        "--months",
-        type=int,
-        default=1,
-        help="Backfill horizon in months (when using backfill)",
-    )
     reset_parser.add_argument(
         "--no-populate",
         dest="no_populate",
@@ -106,16 +85,8 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     # Dispatch
-    if args.command == "ingest" and args.ingest_command == "ynab":
-        # CSV import takes precedence when provided
-        if args.from_csv:
-            return ingest_handlers.ingest_from_csv(args.db, args.from_csv, account_override=args.csv_account)
-        if args.delta:
-            return ingest_handlers.delta_sync(args.db)
-        if args.backfill:
-            return ingest_handlers.backfill(args.db, months=args.months)
-        print("No ingest mode chosen. See --help.")
-        return 2
+    if args.command == "ingest" and args.ingest_command == "csv":
+        return ingest_handlers.ingest_from_csv(args.db, args.csv_path, account_override=args.csv_account)
 
     if args.command == "categories" and args.categories_command == "sync-ynab":
         return admin_handlers.sync_categories(args.db)
@@ -127,17 +98,10 @@ def main(argv: list[str] | None = None) -> int:
         return admin_handlers.db_migrate(args.db)
 
     if args.command == "db" and args.db_command == "reset":
-        # Determine populate mode
         populate = not args.no_populate
-        use_delta = bool(args.delta)
-        # If neither --delta nor --backfill specified, default is backfill
-        if args.backfill:
-            use_delta = False
         return admin_handlers.db_reset(
             args.db,
             populate=populate,
-            delta=use_delta,
-            months=args.months,
             force=args.force,
         )
 

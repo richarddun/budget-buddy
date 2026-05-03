@@ -61,16 +61,13 @@ def db_reset(
     db_path: Path,
     *,
     populate: bool = True,
-    delta: bool = False,
-    months: int = 1,
     force: bool = False,
 ) -> int:
     """Destructively reset the DB file, re-create schema, and optionally repopulate.
 
     - If the DB file exists, it is deleted. Requires `force=True` to proceed.
     - Runs migrations to re-create schema.
-    - If `populate` is True, performs category sync from YNAB, then either
-      delta sync (`delta=True`) or backfill (`months` horizon).
+    - If `populate` is True, performs category sync (from YNAB category maps).
     """
     try:
         if db_path.exists():
@@ -113,21 +110,8 @@ def db_reset(
             print(f"[error] Category sync failed during reset: {e}")
             return 1
 
-        # Ingest transactions
-        try:
-            from . import ingest_handlers as _ing
-
-            if delta:
-                print("[reset] Running delta transaction sync…")
-                rc = _ing.delta_sync(db_path)
-                return rc
-            else:
-                print(f"[reset] Running backfill for last {months} month(s)…")
-                rc = _ing.backfill(db_path, months=months)
-                return rc
-        except Exception as e:
-            print(f"[error] Ingestion during reset failed: {e}")
-            return 1
+        print("[reset] Populate complete. Transaction ingestion via `budgetctl ingest csv <path>`.")
+        return 0
     except Exception as e:
         print(f"[error] Reset failed: {e}")
         return 1
