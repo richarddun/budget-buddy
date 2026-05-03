@@ -492,13 +492,15 @@ async def login_submit(request: Request, pin: str = Form(...), remember: str | N
     expected = os.getenv("APP_ACCESS_PIN")
     if not expected:
         # No PIN configured — auto-login (dev mode)
-        return RedirectResponse(url="/", status_code=303)
+        home = str(request.base_url).rstrip("/")
+        return RedirectResponse(url=home, status_code=303)
     if not hmac.compare_digest(pin.encode(), expected.encode()):
         return await login_page(request, error="Invalid PIN. Please try again.")
     # Build signed session cookie
     remember_bool = remember == "yes"
     name, value, max_age = _build_session_cookie(remember_bool)
-    resp = RedirectResponse(url="/", status_code=303)
+    home = str(request.base_url).rstrip("/")
+    resp = RedirectResponse(url=home, status_code=303)
     resp.set_cookie(
         key=name,
         value=value,
