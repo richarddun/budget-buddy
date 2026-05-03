@@ -1,0 +1,489 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Budget Targets — Envelope System</title>
+    {% if csrf_token %}<meta name="csrf-token" content="{{ csrf_token }}">{% endif %}
+    <meta name="currency-symbol" content="{{ currency_symbol or '€' }}">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <style>
+      :root {
+        --bg: #0f172a; --panel: #111827; --card: #1f2937;
+        --text: #e5e7eb; --muted: #9ca3af;
+        --accent: #60a5fa; --good: #22c55e; --warn: #eab308; --bad: #ef4444;
+      }
+      body { margin:0; font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,'Helvetica Neue',Arial; background:var(--bg); color:var(--text); }
+      .container { max-width:1100px; margin:0 auto; padding:20px; }
+      .header { display:flex; justify-content:space-between; align-items:center; margin-bottom:16px; flex-wrap:wrap; gap:8px; }
+      .back { display:inline-block; padding:8px 12px; border-radius:6px; background:var(--accent); color:#06142b; text-decoration:none; font-weight:600; }
+      .panel { background:var(--panel); border-radius:10px; padding:16px; margin-bottom:14px; border:1px solid #1f2937; }
+      .section-title { font-size:16px; font-weight:700; margin:0 0 10px 0; }
+      .muted { color:var(--muted); font-size:12px; }
+      .grid { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+      @media (max-width:800px) { .grid { grid-template-columns:1fr; } }
+      table { width:100%; border-collapse:collapse; }
+      th, td { border-bottom:1px solid #1f2937; padding:8px; text-align:left; }
+      th { color:var(--muted); font-weight:600; font-size:13px; }
+      input, select { background:#0b1222; color:var(--text); border:1px solid #374151; border-radius:6px; padding:6px 8px; }
+      button { background:#2563eb; color:#fff; border:none; border-radius:6px; padding:8px 12px; cursor:pointer; }
+      .btn-sm { padding:4px 8px; font-size:12px; }
+      .btn-success { background:#16a34a; }
+      .btn-danger { background:#dc2626; }
+      .btn-secondary { background:#374151; }
+      .badge { display:inline-block; background:#374151; border-radius:10px; padding:0 6px; font-size:11px; color:var(--muted); margin-left:4px; }
+
+      /* Progress bars */
+      .progress-bar { height:8px; border-radius:999px; background:#1f2937; overflow:hidden; margin:4px 0; }
+      .progress-fill { height:100%; border-radius:999px; transition:width 0.3s ease; }
+      .progress-fill.good { background:var(--good); }
+      .progress-fill.warn { background:var(--warn); }
+      .progress-fill.bad { background:var(--bad); }
+
+      /* Status pills */
+      .pill { border-radius:999px; padding:2px 8px; font-size:12px; white-space:nowrap; }
+      .pill.on_track { background:rgba(34,197,94,0.2); color:#86efac; }
+      .pill.moderate { background:rgba(59,130,246,0.2); color:#93c5fd; }
+      .pill.warning { background:rgba(234,179,8,0.2); color:#facc15; }
+      .pill.exceeded { background:rgba(239,68,68,0.2); color:#fecaca; }
+
+      /* Alert cards */
+      .alert { padding:10px; border-radius:8px; margin-bottom:8px; background:#0b1222; border:1px solid #1f2937; display:flex; justify-content:space-between; align-items:flex-start; gap:10px; }
+      .alert.approaching { border-color:var(--warn); }
+      .alert.exceeded { border-color:var(--bad); }
+      .alert .message { flex:1; }
+
+      /* Modal */
+      .modal-overlay { position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.6); display:flex; align-items:center; justify-content:center; z-index:1000; }
+      .modal { background:var(--panel); border:1px solid #374151; border-radius:12px; padding:24px; min-width:400px; max-width:500px; }
+      .modal h2 { margin:0 0 16px 0; }
+      .modal-actions { display:flex; gap:8px; justify-content:flex-end; margin-top:16px; }
+
+      /* Cards for summary */
+      .stat-card { background:var(--card); border-radius:8px; padding:12px; text-align:center; }
+      .stat-value { font-size:24px; font-weight:700; }
+      .stat-label { font-size:12px; color:var(--muted); }
+      .summary-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(140px, 1fr)); gap:10px; margin-bottom:14px; }
+    </style>
+  </head>
+  <body>
+    <script>window.APP_BASE = '{{ request.url_for("index") }}'.replace(/\/$/, '');</script>
+    <script src="{{ request.url_for('static', path='sidebar.js') }}"></script>
+    <div class="container">
+
+      <div class="header">
+        <h1 style="margin:0">📮 Budget Targets — Envelope System</h1>
+        <div style="display:flex; gap:8px">
+          <button id="btn-add-target" type="button" style="background:#16a34a">+ New Target</button>
+          <button id="btn-refresh" type="button" class="btn-sm" style="background:var(--accent)">⟳ Refresh</button>
+          <a class="back" href="{{ request.url_for('index') }}">← Back to Chat</a>
+        </div>
+      </div>
+
+      <!-- Month selector -->
+      <div class="panel" style="display:flex; gap:12px; align-items:center; flex-wrap:wrap">
+        <label class="muted" for="month-select">Month</label>
+        <select id="month-select" style="min-width:160px">
+          <!-- Populated by JS -->
+        </select>
+        <label class="muted" style="margin-left:8px">
+          <input type="checkbox" id="chk-rollovers"> Show rollovers
+        </label>
+        <label class="muted">
+          <input type="checkbox" id="chk-warnings-only"> Warnings only
+        </label>
+        <span id="alert-threshold-label" class="muted" style="margin-left:auto">Alert at</span>
+        <input id="alert-threshold" type="number" value="80" min="50" max="100" style="width:70px" />
+        <span class="muted">%</span>
+      </div>
+
+      <!-- Summary stats -->
+      <div id="summary-stats" class="summary-grid">
+        <div class="stat-card"><div class="stat-value" id="stat-target">—</div><div class="stat-label">Total Budgeted</div></div>
+        <div class="stat-card"><div class="stat-value" id="stat-spent">—</div><div class="stat-label">Spent</div></div>
+        <div class="stat-card"><div class="stat-value" id="stat-remaining">—</div><div class="stat-label">Remaining</div></div>
+        <div class="stat-card"><div class="stat-value" id="stat-pct">—</div><div class="stat-label">Used</div></div>
+        <div class="stat-card"><div class="stat-value" id="stat-categories">—</div><div class="stat-label">Categories</div></div>
+        <div class="stat-card"><div class="stat-value" id="stat-rollover">—</div><div class="stat-label">Rolled Over</div></div>
+      </div>
+
+      <!-- Warnings -->
+      <div id="warnings-panel" class="panel" style="display:none">
+        <div class="section-title">⚠️ Warnings & Alerts</div>
+        <div id="warnings-list"></div>
+      </div>
+
+      <!-- Targets table -->
+      <div class="panel">
+        <div class="section-title">
+          Monthly Targets
+          <span id="target-count" class="badge"></span>
+        </div>
+        <div style="overflow:auto">
+          <table id="tbl-targets">
+            <thead>
+              <tr>
+                <th>Category</th>
+                <th>Target</th>
+                <th>Spent</th>
+                <th>Remaining</th>
+                <th>Progress</th>
+                <th>Status</th>
+                <th>Rollover</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- Modal -->
+    <div id="modal-overlay" class="modal-overlay" style="display:none">
+      <div class="modal">
+        <h2 id="modal-title">Set Budget Target</h2>
+        <div style="display:flex; flex-direction:column; gap:12px">
+          <label>Category
+            <select id="modal-category" style="width:100%; box-sizing:border-box; margin-top:4px">
+              <option value="">— Select category —</option>
+            </select>
+          </label>
+          <label>Month
+            <select id="modal-month" style="width:100%; box-sizing:border-box; margin-top:4px"></select>
+          </label>
+          <label>Target Amount ({{ currency_symbol or '€' }})
+            <input id="modal-amount" type="number" step="0.01" min="0" placeholder="e.g. 500.00" style="width:100%; box-sizing:border-box; margin-top:4px" />
+          </label>
+          <label style="display:flex; align-items:center; gap:8px">
+            <input id="modal-rollover" type="checkbox" />
+            <span>Rollover unused amount to next month</span>
+          </label>
+          <div class="muted" id="modal-info"></div>
+        </div>
+        <div class="modal-actions">
+          <button id="modal-cancel" type="button" class="btn-secondary">Cancel</button>
+          <button id="modal-save" type="button" class="btn-success">Save</button>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      const CSRF = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content');
+      const CUR = document.querySelector('meta[name="currency-symbol"]')?.getAttribute('content') || '€';
+      const BASE = window.APP_BASE || '';
+
+      function csrfHeader() { return CSRF ? { 'X-CSRF-Token': CSRF } : {}; }
+      function adminHeader() {
+        try { const tok = localStorage.getItem('adminToken') || localStorage.getItem('admin_token'); return tok ? { 'X-Admin-Token': tok } : {}; } catch { return {}; }
+      }
+
+      function fmtCents(c) {
+        if (c === null || c === undefined) return '—';
+        const sign = c < 0 ? '-' : '';
+        const abs = Math.abs(c);
+        return sign + CUR + (abs/100).toFixed(2);
+      }
+
+      function yyyymmToLabel(yyyymm) {
+        const y = Math.floor(yyyymm / 100);
+        const m = yyyymm % 100;
+        const d = new Date(y, m - 1);
+        return d.toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
+      }
+
+      function currentYyyymm() {
+        const d = new Date();
+        return d.getFullYear() * 100 + (d.getMonth() + 1);
+      }
+
+      function generateMonthOptions() {
+        const now = new Date();
+        const current = now.getFullYear() * 100 + (now.getMonth() + 1);
+        const options = [];
+        // Generate 6 months back, current, 6 months forward
+        for (let i = -6; i <= 6; i++) {
+          const d = new Date(now.getFullYear(), now.getMonth() + i, 1);
+          const val = d.getFullYear() * 100 + (d.getMonth() + 1);
+          const label = d.toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
+          options.push({ value: val, label, isCurrent: val === current });
+        }
+        return options;
+      }
+
+      function populateMonthSelect(sel) {
+        const options = generateMonthOptions();
+        sel.innerHTML = '';
+        options.forEach(o => {
+          const opt = document.createElement('option');
+          opt.value = o.value;
+          opt.textContent = o.label + (o.isCurrent ? ' (current)' : '');
+          if (o.isCurrent) opt.selected = true;
+          sel.appendChild(opt);
+        });
+      }
+
+      // ─── Load data ──────────────────────────────────────────────
+
+      async function fetchJSON(url) {
+        const r = await fetch(url);
+        if (!r.ok) throw new Error('HTTP ' + r.status + ': ' + await r.text().catch(()=>''));
+        return r.json();
+      }
+
+      async function loadData() {
+        const monthEl = document.getElementById('month-select');
+        const month = parseInt(monthEl.value);
+        const showRollovers = document.getElementById('chk-rollovers').checked;
+        const warningsOnly = document.getElementById('chk-warnings-only').checked;
+        const alertThreshold = parseInt(document.getElementById('alert-threshold').value) || 80;
+
+        try {
+          // Load progress
+          const progressUrl = `${BASE}/api/budget-targets/progress?month=${month}&alert_threshold=${alertThreshold}`;
+          const progressData = await fetchJSON(progressUrl);
+
+          // Load targets (with progress and rollovers)
+          const targetsUrl = `${BASE}/api/budget-targets?month=${month}&include_progress=true&include_rollovers=${showRollovers}`;
+          const targetsData = await fetchJSON(targetsUrl);
+
+          renderData(progressData, targetsData, warningsOnly, showRollovers);
+        } catch (e) {
+          const tbody = document.querySelector('#tbl-targets tbody');
+          tbody.innerHTML = `<tr><td colspan="8" class="muted">Failed to load: ${e.message}</td></tr>`;
+        }
+      }
+
+      function renderData(progress, targets, warningsOnly, showRollovers) {
+        // Summary stats
+        const s = progress.summary || {};
+        document.getElementById('stat-target').textContent = fmtCents(s.total_target_cents);
+        document.getElementById('stat-spent').textContent = fmtCents(s.total_spent_cents);
+        document.getElementById('stat-remaining').textContent = fmtCents(s.total_remaining_cents);
+        document.getElementById('stat-pct').textContent = s.overall_percentage != null ? s.overall_percentage.toFixed(1) + '%' : '—';
+        document.getElementById('stat-categories').textContent = s.category_count || '—';
+        document.getElementById('stat-rollover').textContent = fmtCents(s.total_rollover_cents);
+        document.getElementById('target-count').textContent = `(${targets.count || 0} targets)`;
+
+        // Warnings
+        const warnings = progress.warnings || [];
+        const warningsPanel = document.getElementById('warnings-panel');
+        const warningsList = document.getElementById('warnings-list');
+        warningsList.innerHTML = '';
+
+        if (warnings.length > 0) {
+          warningsPanel.style.display = '';
+          warnings.forEach(w => {
+            const div = document.createElement('div');
+            div.className = `alert ${w.severity}`;
+            div.innerHTML = `<div class="message"><strong>${w.severity === 'exceeded' ? '🚨' : '⚠️'} ${w.message}</strong></div>`;
+            warningsList.appendChild(div);
+          });
+        } else {
+          warningsPanel.style.display = 'none';
+        }
+
+        // Table
+        const tbody = document.querySelector('#tbl-targets tbody');
+        tbody.innerHTML = '';
+
+        const categories = progress.categories || [];
+        let visibleCategories = categories;
+
+        if (warningsOnly) {
+          const warningCats = new Set(warnings.map(w => w.category_id));
+          visibleCategories = categories.filter(c => warningCats.has(c.category_id));
+        }
+
+        if (visibleCategories.length === 0) {
+          tbody.innerHTML = '<tr><td colspan="8" class="muted">No targets set for this month. Click "+ New Target" to add one.</td></tr>';
+          return;
+        }
+
+        visibleCategories.forEach(cat => {
+          const tr = document.createElement('tr');
+          const pct = cat.percentage || 0;
+          const pctClass = pct >= 100 ? 'bad' : (pct >= 80 ? 'warn' : 'good');
+
+          tr.innerHTML = `
+            <td><strong>${escapeHtml(cat.category_name)}</strong></td>
+            <td>${fmtCents(cat.target_cents)}</td>
+            <td>${fmtCents(cat.spent_cents)}</td>
+            <td style="color:${cat.remaining_cents < 0 ? 'var(--bad)' : 'var(--good)'}">${fmtCents(cat.remaining_cents)}</td>
+            <td style="min-width:140px">
+              <div class="progress-bar"><div class="progress-fill ${pctClass}" style="width:${Math.min(pct, 100)}%"></div></div>
+              <span class="muted">${pct.toFixed(1)}%</span>
+            </td>
+            <td><span class="pill ${cat.status}">${cat.status.replace('_',' ')}</span></td>
+            <td>${cat.rollover_enabled ? '✅ Yes' : '—'}</td>
+            <td class="actions" style="white-space:nowrap">
+              <button class="btn-sm btn-secondary" data-action="edit" data-cat-id="${cat.category_id}" data-cat-name="${escapeAttr(cat.category_name)}" data-target="${cat.target_cents}">✎</button>
+              <button class="btn-sm btn-danger" data-action="delete" data-cat-id="${cat.category_id}">✕</button>
+            </td>
+          `;
+          tbody.appendChild(tr);
+        });
+      }
+
+      function escapeHtml(s) {
+        if (!s) return '';
+        return String(s).replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+      }
+      function escapeAttr(s) {
+        if (!s) return '';
+        return String(s).replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+      }
+
+      // ─── Modal ──────────────────────────────────────────────────
+
+      function openModal(categoryId, categoryName, currentTarget) {
+        const overlay = document.getElementById('modal-overlay');
+        document.getElementById('modal-title').textContent = categoryId ? `Edit Target: ${categoryName}` : 'New Target';
+        document.getElementById('modal-info').textContent = categoryId ? `Category: ${categoryName}` : '';
+
+        // Populate category dropdown
+        const catSel = document.getElementById('modal-category');
+        if (!categoryId) {
+          // Load all categories for new target
+          fetchJSON(`${BASE}/api/categories?flat=true&archived=false`)
+            .then(j => {
+              catSel.innerHTML = '<option value="">— Select category —</option>';
+              (j.items || []).forEach(cat => {
+                // Exclude root/Holding
+                if (cat.name === 'Holding') return;
+                const opt = document.createElement('option');
+                opt.value = cat.id;
+                opt.textContent = cat.name + (cat.parent_name ? ` [${cat.parent_name}]` : '');
+                catSel.appendChild(opt);
+              });
+            }).catch(() => {});
+        } else {
+          catSel.innerHTML = `<option value="${categoryId}" selected>${categoryName}</option>`;
+          catSel.disabled = true;
+        }
+
+        // Populate month dropdown
+        const monthSel = document.getElementById('modal-month');
+        populateMonthSelect(monthSel);
+
+        if (currentTarget != null) {
+          document.getElementById('modal-amount').value = (currentTarget / 100).toFixed(2);
+        } else {
+          document.getElementById('modal-amount').value = '';
+        }
+        document.getElementById('modal-rollover').checked = false;
+
+        overlay.dataset.catId = categoryId || '';
+        overlay.dataset.mode = categoryId ? 'edit' : 'new';
+        overlay.style.display = 'flex';
+      }
+
+      function closeModal() {
+        document.getElementById('modal-overlay').style.display = 'none';
+        document.getElementById('modal-category').disabled = false;
+      }
+
+      async function handleSave() {
+        const overlay = document.getElementById('modal-overlay');
+        const catId = overlay.dataset.catId;
+        const month = parseInt(document.getElementById('modal-month').value);
+        const amountStr = document.getElementById('modal-amount').value.trim();
+        const rollover = document.getElementById('modal-rollover').checked;
+
+        if (!catId && !document.getElementById('modal-category').value) {
+          alert('Please select a category');
+          return;
+        }
+        if (!amountStr) {
+          alert('Please enter a target amount');
+          return;
+        }
+
+        const amountNum = parseFloat(amountStr);
+        if (isNaN(amountNum) || amountNum < 0) {
+          alert('Please enter a valid positive amount');
+          return;
+        }
+        const amountCents = Math.round(amountNum * 100);
+
+        const finalCatId = catId ? parseInt(catId) : parseInt(document.getElementById('modal-category').value);
+
+        try {
+          const r = await fetch(`${BASE}/api/budget-targets`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', ...csrfHeader(), ...adminHeader() },
+            body: JSON.stringify({
+              category_id: finalCatId,
+              month: month,
+              target_amount_cents: amountCents,
+              rollover: rollover,
+            }),
+          });
+          if (!r.ok) { const j = await r.json().catch(()=>({})); throw new Error(j.detail || 'Error saving'); }
+          closeModal();
+          loadData();
+        } catch (e) {
+          alert('Failed: ' + e.message);
+        }
+      }
+
+      async function handleDelete(categoryId) {
+        if (!confirm('Delete this budget target? This cannot be undone.')) return;
+        try {
+          const month = parseInt(document.getElementById('month-select').value);
+          // Find the target ID for this category+month
+          const data = await fetchJSON(`${BASE}/api/budget-targets?month=${month}&category_id=${categoryId}`);
+          const item = data.items && data.items[0];
+          if (!item) { alert('Target not found'); return; }
+
+          const r = await fetch(`${BASE}/api/budget-targets/${item.id}`, {
+            method: 'DELETE',
+            headers: { ...csrfHeader(), ...adminHeader() },
+          });
+          if (!r.ok) { const j = await r.json().catch(()=>({})); throw new Error(j.detail || 'Error deleting'); }
+          loadData();
+        } catch (e) {
+          alert('Failed: ' + e.message);
+        }
+      }
+
+      // ─── Event wiring ──────────────────────────────────────────
+
+      document.addEventListener('DOMContentLoaded', () => {
+        // Populate month selector
+        populateMonthSelect(document.getElementById('month-select'));
+        loadData();
+      });
+
+      document.getElementById('btn-add-target').addEventListener('click', () => openModal(null, null, null));
+      document.getElementById('btn-refresh').addEventListener('click', loadData);
+      document.getElementById('month-select').addEventListener('change', loadData);
+      document.getElementById('chk-rollovers').addEventListener('change', loadData);
+      document.getElementById('chk-warnings-only').addEventListener('change', loadData);
+      document.getElementById('alert-threshold').addEventListener('change', loadData);
+
+      document.getElementById('modal-cancel').addEventListener('click', closeModal);
+      document.getElementById('modal-save').addEventListener('click', handleSave);
+      document.getElementById('modal-overlay').addEventListener('click', (e) => {
+        if (e.target === e.currentTarget) closeModal();
+      });
+
+      // Delegate clicks on table action buttons
+      document.querySelector('#tbl-targets tbody').addEventListener('click', (e) => {
+        const btn = e.target.closest('button');
+        if (!btn) return;
+        const action = btn.getAttribute('data-action');
+
+        if (action === 'edit') {
+          const catId = btn.getAttribute('data-cat-id');
+          const catName = btn.getAttribute('data-cat-name');
+          const target = btn.getAttribute('data-target');
+          openModal(catId, catName, target ? parseInt(target) : null);
+        } else if (action === 'delete') {
+          const catId = btn.getAttribute('data-cat-id');
+          handleDelete(parseInt(catId));
+        }
+      });
+    </script>
+  </body>
+</html>

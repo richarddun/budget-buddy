@@ -11,6 +11,7 @@
       { href: BASE + '/transactions?has_splits=1', label: '🔀 Splits' },
       { href: BASE + '/categories', label: '📂 Categories' },
       { href: BASE + '/commitments', label: '📑 Commitments' },
+      { href: BASE + '/budget-targets', label: '📮 Budget Targets' },
       { href: BASE + '/subscriptions-report', label: '🔄 Subscriptions' },
       { href: BASE + '/subscriptions-rest-of-month-report', label: '📅 Subs (Rest of Month)' },
       { href: BASE + '/uploads', label: '🗂️ Uploads' },
