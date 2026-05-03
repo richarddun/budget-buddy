@@ -6,6 +6,7 @@
       { href: BASE + '/', label: '🏠 Chat' },
       { href: BASE + '/overview', label: '📋 Overview' },
       { href: BASE + '/budget-health', label: '📊 Budget Health' },
+      { href: BASE + '/transaction/new', label: '➕ Add Transaction' },
       { href: BASE + '/transactions', label: '🧾 Transactions' },
       { href: BASE + '/transactions?has_splits=1', label: '🔀 Splits' },
       { href: BASE + '/categories', label: '📂 Categories' },

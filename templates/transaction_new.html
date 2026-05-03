@@ -1,0 +1,306 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Add Transaction</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    {% if csrf_token %}
+    <meta name="csrf-token" content="{{ csrf_token }}">
+    {% endif %}
+    <style>
+      :root {
+        --bg: #0f172a; --panel: #111827; --card: #1f2937;
+        --text: #e5e7eb; --muted: #9ca3af; --accent: #3b82f6;
+        --success: #22c55e; --error: #ef4444;
+      }
+      body { margin: 0; font-family: system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, 'Helvetica Neue', Arial; background: var(--bg); color: var(--text); }
+      .container { max-width: 640px; margin: 0 auto; padding: 20px; }
+      .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
+      .back { display: inline-block; padding: 8px 12px; border-radius: 6px; background: var(--accent); color: #06142b; text-decoration: none; font-weight: 600; }
+      .panel { background: var(--panel); border-radius: 10px; padding: 24px; border: 1px solid #1f2937; }
+      h1 { margin: 0; }
+      .field { margin-bottom: 18px; }
+      label { display: block; font-size: 14px; font-weight: 600; margin-bottom: 4px; color: var(--muted); }
+      input, select, textarea {
+        box-sizing: border-box; width: 100%; background: #0b1222; color: var(--text);
+        border: 1px solid #374151; border-radius: 6px; padding: 10px 12px; font-size: 15px;
+        transition: border-color 0.15s;
+      }
+      input:focus, select:focus, textarea:focus { outline: none; border-color: var(--accent); }
+      textarea { resize: vertical; min-height: 60px; }
+      .row2 { display: flex; gap: 12px; }
+      .row2 .field { flex: 1; }
+      .amount-wrapper { position: relative; }
+      .amount-prefix { position: absolute; left: 12px; top: 50%; transform: translateY(-50%); color: var(--muted); font-size: 15px; pointer-events: none; }
+      .amount-wrapper input { padding-left: 22px; }
+      .hint { font-size: 12px; color: var(--muted); margin-top: 2px; }
+      .btn-row { display: flex; gap: 10px; margin-top: 24px; }
+      .btn { padding: 10px 20px; border: none; border-radius: 6px; font-size: 15px; font-weight: 600; cursor: pointer; }
+      .btn-primary { background: var(--accent); color: #06142b; }
+      .btn-primary:hover { background: #2563eb; }
+      .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+      .btn-secondary { background: #374151; color: var(--text); }
+      .btn-secondary:hover { background: #4b5563; }
+      .toast { position: fixed; bottom: 20px; right: 20px; padding: 12px 20px; border-radius: 8px; font-size: 14px; font-weight: 600; z-index: 999; display: none; }
+      .toast-success { background: #14532d; color: #86efac; border: 1px solid #22c55e; }
+      .toast-error { background: #450a0a; color: #fecaca; border: 1px solid #ef4444; }
+      .type-toggle { display: flex; gap: 0; margin-bottom: 18px; border-radius: 6px; overflow: hidden; border: 1px solid #374151; }
+      .type-toggle button { flex: 1; padding: 10px; border: none; background: #0b1222; color: var(--muted); font-size: 14px; font-weight: 600; cursor: pointer; transition: 0.15s; }
+      .type-toggle button.active { background: var(--accent); color: #06142b; }
+      .type-toggle button:not(.active):hover { background: #1f2937; }
+      .spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid transparent; border-top-color: currentColor; border-radius: 50%; animation: spin 0.6s linear infinite; vertical-align: middle; margin-right: 6px; }
+      @keyframes spin { to { transform: rotate(360deg); } }
+    </style>
+  </head>
+  <body>
+    <script>window.APP_BASE = '{{ request.url_for("index") }}'.replace(/\/$/, '');</script>
+    <script src="{{ request.url_for('static', path='sidebar.js') }}"></script>
+    <div class="container">
+      <div class="header">
+        <h1>➕ Add Transaction</h1>
+        <a class="back" href="{{ request.url_for('overview') if 'overview' in request.url_for('overview') else request.url_for('index') }}">← Back</a>
+      </div>
+
+      <div class="panel">
+        <form id="txn-form" novalidate>
+          <!-- Type toggle: outflow (spend) vs inflow (income) -->
+          <div class="type-toggle" role="radiogroup" aria-label="Transaction type">
+            <button type="button" id="type-outflow" class="active" role="radio" aria-checked="true" data-type="outflow">💳 Outflow</button>
+            <button type="button" id="type-inflow" role="radio" aria-checked="false" data-type="inflow">💰 Inflow</button>
+          </div>
+
+          <div class="row2">
+            <div class="field">
+              <label for="txn-date">Date</label>
+              <input type="date" id="txn-date" required>
+            </div>
+            <div class="field">
+              <label for="txn-amount">Amount</label>
+              <div class="amount-wrapper">
+                <span class="amount-prefix" id="amount-prefix">—</span>
+                <input type="number" id="txn-amount" placeholder="0.00" step="0.01" min="0.01" required>
+              </div>
+              <div class="hint">Enter positive number</div>
+            </div>
+          </div>
+
+          <div class="field">
+            <label for="txn-payee">Payee</label>
+            <input type="text" id="txn-payee" placeholder="e.g. Tesco, Lidl, Amazon" required>
+          </div>
+
+          <div class="row2">
+            <div class="field">
+              <label for="txn-account">Account</label>
+              <select id="txn-account" required>
+                <option value="">Loading…</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="txn-category">Category</label>
+              <select id="txn-category">
+                <option value="">None (uncategorised)</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="field">
+            <label for="txn-memo">Memo <span class="muted" style="font-weight:400">(optional)</span></label>
+            <textarea id="txn-memo" placeholder="Additional notes…"></textarea>
+          </div>
+
+          <div class="btn-row">
+            <button type="submit" class="btn btn-primary" id="btn-submit">➕ Add Transaction</button>
+            <button type="reset" class="btn btn-secondary" id="btn-clear">Clear</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <div id="toast" class="toast" role="alert"></div>
+
+    <script>
+      (function() {
+        'use strict';
+
+        /* ── helpers ── */
+        const base = window.APP_BASE || '';
+        const csrfMeta = document.querySelector('meta[name="csrf-token"]');
+        const csrfToken = csrfMeta ? csrfMeta.getAttribute('content') : '';
+
+        function qs(s) { return document.querySelector(s); }
+
+        function showToast(msg, type) {
+          const t = qs('#toast');
+          t.textContent = msg;
+          t.className = 'toast toast-' + type;
+          t.style.display = 'block';
+          clearTimeout(t._hide);
+          t._hide = setTimeout(() => { t.style.display = 'none'; }, 4000);
+        }
+
+        function isoToday() {
+          const d = new Date();
+          return d.getFullYear() + '-' +
+            String(d.getMonth() + 1).padStart(2, '0') + '-' +
+            String(d.getDate()).padStart(2, '0');
+        }
+
+        function setLoading(loading) {
+          const btn = qs('#btn-submit');
+          if (loading) {
+            btn.disabled = true;
+            btn.innerHTML = '<span class="spinner"></span>Saving…';
+          } else {
+            btn.disabled = false;
+            btn.textContent = '➕ Add Transaction';
+          }
+        }
+
+        /* ── type toggle ── */
+        let txnType = 'outflow'; /* outflow = spend (positive → negative), inflow = credit (positive) */
+
+        qs('#type-outflow').addEventListener('click', function() {
+          if (txnType === 'outflow') return;
+          txnType = 'outflow';
+          this.classList.add('active');
+          this.setAttribute('aria-checked', 'true');
+          qs('#type-inflow').classList.remove('active');
+          qs('#type-inflow').setAttribute('aria-checked', 'false');
+          qs('#amount-prefix').textContent = '—';
+        });
+
+        qs('#type-inflow').addEventListener('click', function() {
+          if (txnType === 'inflow') return;
+          txnType = 'inflow';
+          this.classList.add('active');
+          this.setAttribute('aria-checked', 'true');
+          qs('#type-outflow').classList.remove('active');
+          qs('#type-outflow').setAttribute('aria-checked', 'false');
+          qs('#amount-prefix').textContent = '+';
+        });
+
+        /* ── load accounts ── */
+        async function loadAccounts() {
+          try {
+            const r = await fetch(base + '/api/accounts');
+            const j = await r.json();
+            const sel = qs('#txn-account');
+            sel.innerHTML = '<option value="">Select account…</option>';
+            for (const a of (j.accounts || [])) {
+              if (!a.is_active) continue;
+              const o = document.createElement('option');
+              o.value = a.id;
+              o.textContent = a.name;
+              sel.appendChild(o);
+            }
+          } catch (e) {
+            qs('#txn-account').innerHTML = '<option value="">Failed to load accounts</option>';
+          }
+        }
+
+        /* ── load categories ── */
+        async function loadCategories() {
+          try {
+            const r = await fetch(base + '/api/categories');
+            const j = await r.json();
+            const sel = qs('#txn-category');
+            sel.innerHTML = '<option value="">None (uncategorised)</option>';
+
+            function flatten(tree, depth) {
+              for (const c of tree) {
+                const o = document.createElement('option');
+                o.value = c.id;
+                o.textContent = '  '.repeat(depth) + c.name;
+                sel.appendChild(o);
+                if (c.children && c.children.length) flatten(c.children, depth + 1);
+              }
+            }
+
+            /* The API returns {categories: [...]} with tree structure */
+            flatten(j.categories || j.data || [], 0);
+          } catch (e) {
+            // categories are optional, silently degrade
+          }
+        }
+
+        /* ── set default date ── */
+        qs('#txn-date').value = isoToday();
+
+        /* ── form submit ── */
+        qs('#txn-form').addEventListener('submit', async function(e) {
+          e.preventDefault();
+
+          /* Validate */
+          const dateVal = qs('#txn-date').value;
+          const amtVal = parseFloat(qs('#txn-amount').value);
+          const payeeVal = qs('#txn-payee').value.trim();
+          const acctVal = qs('#txn-account').value;
+          const catVal = qs('#txn-category').value;
+          const memoVal = qs('#txn-memo').value.trim();
+
+          if (!dateVal) { showToast('Please select a date', 'error'); return; }
+          if (!amtVal || amtVal <= 0) { showToast('Please enter a positive amount', 'error'); return; }
+          if (!payeeVal) { showToast('Please enter a payee', 'error'); return; }
+          if (!acctVal) { showToast('Please select an account', 'error'); return; }
+
+          /* Convert amount to cents. For outflow it's negative (money leaving). */
+          const amountCents = Math.round(amtVal * 100);
+          const signedCents = txnType === 'outflow' ? amountCents : -amountCents;
+
+          const payload = {
+            amount_cents: signedCents,
+            payee: payeeVal,
+            posted_at: dateVal,
+            account_id: parseInt(acctVal, 10),
+          };
+          if (catVal) payload.category_id = parseInt(catVal, 10);
+          if (memoVal) payload.memo = memoVal;
+
+          setLoading(true);
+          try {
+            const r = await fetch(base + '/api/transactions/quick-add', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'X-CSRF-Token': csrfToken,
+              },
+              body: JSON.stringify(payload),
+            });
+            const j = await r.json();
+            if (!r.ok) {
+              showToast(j.detail || 'Failed to add transaction', 'error');
+            } else {
+              showToast('✅ Transaction added — €' + amtVal.toFixed(2) + ' ' + payeeVal, 'success');
+              /* Reset form, keep date and account */
+              qs('#txn-amount').value = '';
+              qs('#txn-payee').value = '';
+              qs('#txn-category').value = '';
+              qs('#txn-memo').value = '';
+              qs('#txn-date').value = isoToday();
+              qs('#txn-amount').focus();
+            }
+          } catch (e) {
+            showToast('Network error — try again', 'error');
+          } finally {
+            setLoading(false);
+          }
+        });
+
+        /* ── clear button ── */
+        qs('#btn-clear').addEventListener('click', function() {
+          qs('#txn-amount').value = '';
+          qs('#txn-payee').value = '';
+          qs('#txn-category').value = '';
+          qs('#txn-memo').value = '';
+          qs('#txn-date').value = isoToday();
+          qs('#txn-amount').focus();
+        });
+
+        /* ── init ── */
+        loadAccounts();
+        loadCategories();
+      })();
+    </script>
+  </body>
+</html>
