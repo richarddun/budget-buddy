@@ -112,8 +112,9 @@ def is_session_valid(request: Request) -> bool:
         # No PIN configured — no auth required (dev mode)
         return True
     # Auto-bypass PIN for LAN requests (PIN-less access)
-    if _is_lan_request(request):
-        return True
+    # DISABLED for now — require PIN everywhere
+    # if _is_lan_request(request):
+    #     return True
     cookie = request.cookies.get(_SESSION_COOKIE)
     if not cookie:
         return False
