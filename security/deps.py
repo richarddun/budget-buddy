@@ -124,7 +124,8 @@ def is_session_valid(request: Request) -> bool:
 def require_session(request: Request) -> None:
     """Redirect to /login if no valid session cookie."""
     if not is_session_valid(request):
-        raise HTTPException(status_code=303, detail="Login required", headers={"Location": "/login"})
+        login_url = request.url_for("login_page")
+        raise HTTPException(status_code=303, detail="Login required", headers={"Location": str(login_url)})
 
 
 def get_session_max_age(remember: bool) -> int:
