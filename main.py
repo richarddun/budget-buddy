@@ -124,6 +124,11 @@ try:
 except Exception:
     splits_router = None
 
+try:
+    from api.csv_import import router as csv_import_router
+except Exception:
+    csv_import_router = None
+
 # Include API routers at import time for conventional startup
 if forecast_router is not None:
     app.include_router(forecast_router)
@@ -156,6 +161,9 @@ except Exception:
 
 if splits_router is not None:
     app.include_router(splits_router)
+
+if csv_import_router is not None:
+    app.include_router(csv_import_router)
 
 if recurring_router is not None:
     app.include_router(recurring_router)

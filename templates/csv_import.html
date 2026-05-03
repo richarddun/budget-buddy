@@ -1,0 +1,498 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>CSV Import</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style>
+      /* Dark theme, matching existing app style */
+      * { box-sizing: border-box; }
+      body {
+        background-color: #1e1e2f;
+        color: #ddd;
+        font-family: 'Segoe UI', sans-serif;
+        margin: 0;
+        padding: 20px;
+        min-height: 100vh;
+      }
+      .container {
+        max-width: 960px;
+        margin: 0 auto;
+      }
+      h1 {
+        margin-top: 0;
+        font-size: 1.6em;
+        color: #fff;
+      }
+      .back {
+        display: inline-block;
+        margin-bottom: 15px;
+        padding: 8px 16px;
+        background: #4477dd;
+        color: white;
+        text-decoration: none;
+        border-radius: 6px;
+        font-size: 0.9em;
+      }
+      .back:hover { background: #5599ee; }
+
+      /* Drop zone */
+      #dropzone {
+        border: 2px dashed #556;
+        border-radius: 12px;
+        padding: 50px 20px;
+        text-align: center;
+        cursor: pointer;
+        transition: border-color 0.3s, background-color 0.3s;
+        background: #252540;
+        margin-bottom: 20px;
+      }
+      #dropzone.dragover {
+        border-color: #66aaff;
+        background: #2a2a50;
+      }
+      #dropzone.has-file {
+        border-color: #4caf50;
+        background: #1e3a2e;
+      }
+      #dropzone-icon {
+        font-size: 48px;
+        margin-bottom: 10px;
+        opacity: 0.5;
+      }
+      #dropzone-text {
+        font-size: 1.1em;
+        color: #aaa;
+      }
+      #dropzone-filename {
+        display: none;
+        font-size: 1.1em;
+        color: #8bc34a;
+        margin-top: 8px;
+      }
+
+      /* Parser detection */
+      #parser-badge {
+        display: none;
+        margin-bottom: 20px;
+        padding: 10px 16px;
+        border-radius: 8px;
+        background: #263238;
+        border-left: 4px solid #66aaff;
+      }
+      #parser-badge.known { border-color: #4caf50; }
+      #parser-badge.unknown { border-color: #ff9800; }
+
+      /* Preview table */
+      #preview-section {
+        display: none;
+        margin-bottom: 20px;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        background: #252540;
+        border-radius: 8px;
+        overflow: hidden;
+      }
+      th, td {
+        padding: 10px 12px;
+        text-align: left;
+        border-bottom: 1px solid #333;
+        font-size: 0.85em;
+      }
+      th {
+        background: #333350;
+        color: #99aacc;
+        font-size: 0.8em;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+      }
+      tr:hover { background: #2a2a48; }
+      .preview-info {
+        margin-bottom: 10px;
+        color: #888;
+        font-size: 0.9em;
+      }
+
+      /* Account mapping */
+      #import-options {
+        display: none;
+        background: #252540;
+        border-radius: 8px;
+        padding: 20px;
+        margin-bottom: 20px;
+      }
+      #import-options h3 {
+        margin: 0 0 12px 0;
+        color: #ccc;
+        font-size: 1em;
+      }
+      #import-options label {
+        display: block;
+        margin-bottom: 6px;
+        color: #aaa;
+        font-size: 0.9em;
+      }
+      #import-options select {
+        width: 100%;
+        padding: 10px;
+        border: 1px solid #444;
+        border-radius: 6px;
+        background: #1e1e30;
+        color: #ddd;
+        font-size: 0.95em;
+        margin-bottom: 12px;
+      }
+      #import-options select:focus {
+        outline: none;
+        border-color: #66aaff;
+      }
+
+      /* Buttons */
+      .btn {
+        padding: 12px 28px;
+        border: none;
+        border-radius: 8px;
+        font-size: 1em;
+        cursor: pointer;
+        transition: background 0.2s;
+      }
+      .btn-primary {
+        background: #4caf50;
+        color: white;
+      }
+      .btn-primary:hover { background: #5dc060; }
+      .btn-primary:disabled {
+        background: #2e7d32;
+        opacity: 0.6;
+        cursor: not-allowed;
+      }
+      .btn-secondary {
+        background: #555;
+        color: white;
+        margin-right: 10px;
+      }
+      .btn-secondary:hover { background: #666; }
+
+      /* Status messages */
+      #status {
+        display: none;
+        margin-top: 20px;
+        padding: 16px;
+        border-radius: 8px;
+      }
+      #status.success {
+        display: block;
+        background: #1b3a1b;
+        color: #8bc34a;
+        border: 1px solid #2e7d32;
+      }
+      #status.error {
+        display: block;
+        background: #3a1b1b;
+        color: #ef9a9a;
+        border: 1px solid #7d2e2e;
+      }
+      .status-rows {
+        font-size: 1.2em;
+        font-weight: bold;
+        margin: 8px 0;
+      }
+
+      /* Loading spinner */
+      .spinner {
+        display: inline-block;
+        width: 16px;
+        height: 16px;
+        border: 2px solid #888;
+        border-top: 2px solid #66aaff;
+        border-radius: 50%;
+        animation: spin 0.8s linear infinite;
+        vertical-align: middle;
+        margin-right: 8px;
+      }
+      @keyframes spin { to { transform: rotate(360deg); } }
+
+      /* Responsive */
+      @media (max-width: 600px) {
+        #dropzone { padding: 30px 10px; }
+        th, td { padding: 6px 8px; font-size: 0.75em; }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <script>window.APP_BASE = '{{ request.url_for("index") }}'.replace(/\/$/, '');</script>
+      <script src="{{ request.url_for('static', path='sidebar.js') }}"></script>
+
+      <a class="back" href="{{ request.url_for('index') }}">⬅️ Back to Chat</a>
+      <h1>📊 CSV Import</h1>
+      <p style="color:#888; font-size:0.9em;">
+        Upload a CSV file exported from your bank. Supported formats:
+        <strong>AIB</strong> (Date, Type, Details, Amount, Balance),
+        <strong>Bank of Ireland</strong>,
+        <strong>Permanent TSB</strong>,
+        <strong>Revolut</strong>.
+      </p>
+
+      <!-- Drop zone -->
+      <div id="dropzone">
+        <div id="dropzone-icon">📂</div>
+        <div id="dropzone-text">Drag &amp; drop a CSV file here, or click to browse</div>
+        <div id="dropzone-filename"></div>
+        <input type="file" id="file-input" accept=".csv" style="display:none" />
+      </div>
+
+      <!-- Parser badge -->
+      <div id="parser-badge">
+        <strong>Detected format:</strong> <span id="parser-label"></span>
+      </div>
+
+      <!-- Preview table -->
+      <div id="preview-section">
+        <div class="preview-info">
+          Showing up to 20 rows · <span id="total-rows">0</span> total
+        </div>
+        <div style="overflow-x:auto;">
+          <table id="preview-table">
+            <thead id="preview-head"></thead>
+            <tbody id="preview-body"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Import options -->
+      <div id="import-options">
+        <h3>⚙️ Import Settings</h3>
+        <label for="account-select">Account</label>
+        <select id="account-select">
+          <option value="">— Auto-detect from CSV —</option>
+          {% for acct in accounts %}
+          <option value="{{ acct.name }}">{{ acct.name }} ({{ acct.type }})</option>
+          {% endfor %}
+        </select>
+        <button id="btn-import" class="btn btn-primary" disabled>Confirm &amp; Import</button>
+      </div>
+
+      <!-- Status -->
+      <div id="status"></div>
+    </div>
+
+    <script>
+      (function() {
+        const dropzone = document.getElementById('dropzone');
+        const fileInput = document.getElementById('file-input');
+        const dropzoneText = document.getElementById('dropzone-text');
+        const dropzoneFilename = document.getElementById('dropzone-filename');
+        const parserBadge = document.getElementById('parser-badge');
+        const parserLabel = document.getElementById('parser-label');
+        const previewSection = document.getElementById('preview-section');
+        const previewHead = document.getElementById('preview-head');
+        const previewBody = document.getElementById('preview-body');
+        const totalRows = document.getElementById('total-rows');
+        const importOptions = document.getElementById('import-options');
+        const accountSelect = document.getElementById('account-select');
+        const btnImport = document.getElementById('btn-import');
+        const statusEl = document.getElementById('status');
+
+        let currentFile = null;
+        let currentFilename = null;
+
+        // ---- Drag & Drop handlers ----
+        dropzone.addEventListener('click', () => fileInput.click());
+
+        dropzone.addEventListener('dragover', (e) => {
+          e.preventDefault();
+          dropzone.classList.add('dragover');
+        });
+        dropzone.addEventListener('dragleave', () => {
+          dropzone.classList.remove('dragover');
+        });
+        dropzone.addEventListener('drop', (e) => {
+          e.preventDefault();
+          dropzone.classList.remove('dragover');
+          if (e.dataTransfer.files.length) {
+            handleFile(e.dataTransfer.files[0]);
+          }
+        });
+
+        fileInput.addEventListener('change', () => {
+          if (fileInput.files.length) {
+            handleFile(fileInput.files[0]);
+          }
+        });
+
+        // ---- File handling ----
+        function handleFile(file) {
+          if (!file.name.toLowerCase().endsWith('.csv')) {
+            showStatus('error', 'Please select a CSV file.');
+            return;
+          }
+          currentFile = file;
+          currentFilename = file.name;
+          dropzone.classList.add('has-file');
+          dropzoneText.style.display = 'none';
+          dropzoneFilename.style.display = 'block';
+          dropzoneFilename.textContent = '📄 ' + file.name;
+          showStatus(null);
+          uploadPreview(file);
+        }
+
+        // ---- Upload for preview ----
+        async function uploadPreview(file) {
+          showLoading();
+
+          const formData = new FormData();
+          formData.append('file', file);
+
+          try {
+            const resp = await fetch('/api/csv-import/preview', {
+              method: 'POST',
+              body: formData,
+            });
+            if (!resp.ok) {
+              const err = await resp.json();
+              showStatus('error', err.detail || 'Preview failed.');
+              return;
+            }
+            const data = await resp.json();
+            renderPreview(data);
+          } catch (err) {
+            showStatus('error', 'Network error: ' + err.message);
+          }
+        }
+
+        // ---- Render preview ----
+        function renderPreview(data) {
+          // Parser badge
+          if (data.detected_parser) {
+            parserBadge.style.display = 'block';
+            parserBadge.className = 'known';
+            parserLabel.textContent = data.detected_parser;
+          } else {
+            parserBadge.style.display = 'block';
+            parserBadge.className = 'unknown';
+            parserLabel.textContent = 'Unknown format — import will use generic CSV parser';
+          }
+
+          // Preview table
+          previewSection.style.display = 'block';
+          totalRows.textContent = data.total_rows;
+
+          // Build table headers
+          const canonFields = ['date', 'payee', 'memo', 'amount_cents'];
+          const canonLabels = { date: 'Date', payee: 'Payee', memo: 'Memo', amount_cents: 'Amount' };
+
+          let headHtml = '<tr>';
+          for (const field of canonFields) {
+            headHtml += '<th>' + canonLabels[field] + '</th>';
+          }
+          headHtml += '</tr>';
+          previewHead.innerHTML = headHtml;
+
+          // Build table rows
+          const rows = data.rows || [];
+          let bodyHtml = '';
+          for (const row of rows) {
+            const amount = row.amount_cents != null ? formatCents(row.amount_cents) : '—';
+            bodyHtml += '<tr>';
+            bodyHtml += '<td>' + esc(row.date || '') + '</td>';
+            bodyHtml += '<td>' + esc(row.payee || '') + '</td>';
+            bodyHtml += '<td>' + esc(row.memo || '') + '</td>';
+            bodyHtml += '<td style="' + (row.amount_cents < 0 ? 'color:#ef9a9a' : 'color:#8bc34a') + '">' + amount + '</td>';
+            bodyHtml += '</tr>';
+          }
+          previewBody.innerHTML = bodyHtml;
+
+          // Import options
+          importOptions.style.display = 'block';
+          btnImport.disabled = false;
+
+          // Populate accounts dropdown if available
+          if (data.accounts && data.accounts.length) {
+            accountSelect.innerHTML = '<option value="">— Auto-detect from CSV —</option>';
+            for (const acct of data.accounts) {
+              accountSelect.innerHTML += '<option value="' + esc(acct.name) + '">' + esc(acct.name) + ' (' + esc(acct.type) + ')</option>';
+            }
+          }
+
+          // Reset status
+          showStatus(null);
+          hideLoading();
+        }
+
+        // ---- Confirm import ----
+        btnImport.addEventListener('click', async () => {
+          if (!currentFile) return;
+          btnImport.disabled = true;
+          btnImport.textContent = 'Importing…';
+
+          const formData = new FormData();
+          formData.append('file', currentFile);
+          formData.append('account_name', accountSelect.value);
+
+          try {
+            const resp = await fetch('/api/csv-import/confirm', {
+              method: 'POST',
+              body: formData,
+            });
+            if (!resp.ok) {
+              const err = await resp.json();
+              showStatus('error', err.detail || 'Import failed.');
+              btnImport.disabled = false;
+              btnImport.textContent = 'Confirm & Import';
+              return;
+            }
+            const result = await resp.json();
+            showStatus('success',
+              '✅ Import complete!<br/>' +
+              '<div class="status-rows">' + result.rows_upserted + ' transactions imported</div>' +
+              '<small>Started: ' + result.started_at + '<br/>Finished: ' + result.finished_at + '</small>'
+            );
+            btnImport.style.display = 'none';
+          } catch (err) {
+            showStatus('error', 'Network error: ' + err.message);
+            btnImport.disabled = false;
+            btnImport.textContent = 'Confirm & Import';
+          }
+        });
+
+        // ---- Helpers ----
+        function formatCents(cents) {
+          const abs = Math.abs(cents);
+          const euros = (abs / 100).toFixed(2);
+          return (cents < 0 ? '-€' : '€') + euros;
+        }
+
+        function esc(s) {
+          const d = document.createElement('div');
+          d.textContent = s;
+          return d.innerHTML;
+        }
+
+        function showStatus(type, msg) {
+          if (!type) {
+            statusEl.style.display = 'none';
+            statusEl.className = '';
+            statusEl.innerHTML = '';
+            return;
+          }
+          statusEl.className = type;
+          statusEl.innerHTML = msg || '';
+        }
+
+        function showLoading() {
+          // Show spinner on import button
+          btnImport.disabled = true;
+          btnImport.innerHTML = '<span class="spinner"></span>Analysing…';
+        }
+
+        function hideLoading() {
+          btnImport.innerHTML = 'Confirm & Import';
+          btnImport.disabled = false;
+        }
+      })();
+    </script>
+  </body>
+</html>
