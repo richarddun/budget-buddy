@@ -483,7 +483,7 @@ async def login_page(request: Request, error: str | None = None):
     """Render the login page. If already authenticated, redirect to home."""
     if _is_session_valid(request):
         return RedirectResponse(url="/", status_code=303)
-    return templates.TemplateResponse("login.html", {"request": request, "error": error})
+    return templates.TemplateResponse(request, "login.html", {"error": error})
 
 
 @app.post("/login", response_class=HTMLResponse)
@@ -529,30 +529,27 @@ async def index(request: Request):
     _ensure_today_digest_message_inserted(digest)
     # Load chat after potential insertion so it appears at the top
     chat_history = load_recent_messages()
-    return templates.TemplateResponse(
-        "chat.html",
-        {"request": request, "chat_history": chat_history, "digest": digest},
-    )
+    return templates.TemplateResponse(request, "chat.html", {"chat_history": chat_history, "digest": digest})
 
 @app.get("/overview", response_class=HTMLResponse)
 async def overview(request: Request):
     _require_session_dep(request)
     csrf_token = os.getenv("CSRF_TOKEN") or None
-    return templates.TemplateResponse("overview.html", {"request": request, "csrf_token": csrf_token})
+    return templates.TemplateResponse(request, "overview.html", {"csrf_token": csrf_token})
 
 @app.get("/admin", response_class=HTMLResponse)
 async def admin_settings(request: Request):
     _require_session_dep(request)
     """Lightweight admin settings page for configurable features (anchors, floors)."""
     csrf_token = os.getenv("CSRF_TOKEN") or None
-    return templates.TemplateResponse("admin.html", {"request": request, "csrf_token": csrf_token, "currency_symbol": CURRENCY_SYMBOL})
+    return templates.TemplateResponse(request, "admin.html", {"csrf_token": csrf_token, "currency_symbol": CURRENCY_SYMBOL})
 
 @app.get("/transactions", response_class=HTMLResponse)
 async def transactions_browser(request: Request):
     _require_session_dep(request)
     """Simple transaction browser to verify local data."""
     csrf_token = os.getenv("CSRF_TOKEN") or None
-    return templates.TemplateResponse("transactions.html", {"request": request, "csrf_token": csrf_token, "currency_symbol": CURRENCY_SYMBOL})
+    return templates.TemplateResponse(request, "transactions.html", {"csrf_token": csrf_token, "currency_symbol": CURRENCY_SYMBOL})
 
 @app.get("/transaction/new", response_class=HTMLResponse)
 async def transaction_new(request: Request):
@@ -566,7 +563,7 @@ async def categories_page(request: Request):
     _require_session_dep(request)
     """Full category management page with hierarchy tree, add/edit, archive."""
     csrf_token = os.getenv("CSRF_TOKEN") or None
-    return templates.TemplateResponse("categories.html", {"request": request, "csrf_token": csrf_token, "currency_symbol": CURRENCY_SYMBOL})
+    return templates.TemplateResponse(request, "categories.html", {"csrf_token": csrf_token, "currency_symbol": CURRENCY_SYMBOL})
 
 
 @app.get("/commitments", response_class=HTMLResponse)
@@ -574,7 +571,7 @@ async def commitments_page(request: Request):
     _require_session_dep(request)
     """Simple commitments dashboard with totals and list."""
     csrf_token = os.getenv("CSRF_TOKEN") or None
-    return templates.TemplateResponse("commitments.html", {"request": request, "csrf_token": csrf_token, "currency_symbol": CURRENCY_SYMBOL})
+    return templates.TemplateResponse(request, "commitments.html", {"csrf_token": csrf_token, "currency_symbol": CURRENCY_SYMBOL})
 
 
 @app.get("/recurring", response_class=HTMLResponse)
@@ -582,7 +579,7 @@ async def recurring_page(request: Request):
     _require_session_dep(request)
     """Manage recurring transaction templates."""
     csrf_token = os.getenv("CSRF_TOKEN") or None
-    return templates.TemplateResponse("recurring.html", {"request": request, "csrf_token": csrf_token, "currency_symbol": CURRENCY_SYMBOL})
+    return templates.TemplateResponse(request, "recurring.html", {"csrf_token": csrf_token, "currency_symbol": CURRENCY_SYMBOL})
 
 
 @app.get("/budget-targets", response_class=HTMLResponse)
@@ -606,7 +603,7 @@ async def transaction_splits_page(request: Request, idempotency_key: str):
     _require_session_dep(request)
     """Transaction split management page."""
     csrf_token = os.getenv("CSRF_TOKEN") or None
-    return templates.TemplateResponse("transaction_splits.html", {"request": request, "csrf_token": csrf_token, "currency_symbol": CURRENCY_SYMBOL, "idempotency_key": idempotency_key})
+    return templates.TemplateResponse(request, "transaction_splits.html", {"csrf_token": csrf_token, "currency_symbol": CURRENCY_SYMBOL, "idempotency_key": idempotency_key})
 
 @app.post("/local/sync-transactions-now")
 async def sync_transactions_now(request: Request):
@@ -638,15 +635,11 @@ async def get_budget_health(request: Request):
         html_report = analyzer.generate_html_report()
         # Conditionally expose CSRF token to the template when configured
         csrf_token = os.getenv("CSRF_TOKEN") or None
-        return templates.TemplateResponse(
-            "budget_health.html",
-            {"request": request, "report_html": html_report, "csrf_token": csrf_token, "currency_symbol": CURRENCY_SYMBOL},
+        return templates.TemplateResponse(request, "budget_health.html", {"report_html": html_report, "csrf_token": csrf_token, "currency_symbol": CURRENCY_SYMBOL},
         )
     except Exception as e:
         logger.error(f"Error generating budget health report: {e}")
-        return templates.TemplateResponse(
-            "error.html",
-            {"request": request, "title": "Budget Health - Error", "error_message": str(e)},
+        return templates.TemplateResponse(request, "error.html", {"title": "Budget Health - Error", "error_message": str(e)},
             status_code=500,
         )
 
@@ -838,13 +831,11 @@ async def get_subscriptions_report(request: Request, filter_view: str = "all"):
             'generated_at_str': datetime.now().strftime('%Y-%m-%d at %H:%M:%S'),
         }
 
-        return templates.TemplateResponse("subscriptions_report.html", context)
+        return templates.TemplateResponse(request, "subscriptions_report.html", context)
 
     except Exception as e:
         logger.error(f"Error generating subscriptions report: {e}")
-        return templates.TemplateResponse(
-            "error.html",
-            {"request": request, "title": "Subscriptions Report - Error", "error_message": str(e)},
+        return templates.TemplateResponse(request, "error.html", {"title": "Subscriptions Report - Error", "error_message": str(e)},
             status_code=500,
         )
 
@@ -1091,12 +1082,12 @@ from fastapi.responses import HTMLResponse
 async def view_uploads(request: Request):
     _require_session_dep(request)
     files = [f.name for f in UPLOAD_DIR.iterdir() if f.is_file()]
-    return templates.TemplateResponse("uploads.html", {"request": request, "files": files})
+    return templates.TemplateResponse(request, "uploads.html", {"files": files})
 
 @app.get("/unmatched", response_class=HTMLResponse)
 async def view_unmatched(request: Request):
     _require_session_dep(request)
-    return templates.TemplateResponse("unmatched.html", {"request": request})
+    return templates.TemplateResponse(request, "unmatched.html", {})
 
 @app.get("/sse-test")
 async def sse_test():

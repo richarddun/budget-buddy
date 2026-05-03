@@ -5,7 +5,7 @@ from dotenv import load_dotenv
 load_dotenv()
 STAGING = os.getenv("STAGING", "false").lower() in {"1", "true", "yes"}
 
-if STAGING:
+if True:  # YNAB removed — using dummy agent
     logger = logging.getLogger("uvicorn.error")
 
     class _DummyResult:
@@ -33,5 +33,4 @@ if STAGING:
             return _DummyContext(prompt)
 
     budget_agent = _DummyAgent()
-else:
-    from .budget_agent_real import budget_agent  # noqa: F401
+# YNAB agent removed — using dummy agent above
