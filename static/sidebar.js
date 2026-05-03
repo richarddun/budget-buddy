@@ -57,6 +57,18 @@
       sb.appendChild(a);
     });
 
+    // Logout link
+    const sep = document.createElement('hr');
+    sep.style.cssText = 'border: none; border-top: 1px solid #1f2937; margin: 8px 4px;';
+    sb.appendChild(sep);
+    const logout = document.createElement('a');
+    logout.href = BASE + '/logout';
+    logout.textContent = '🚪 Sign out';
+    logout.style.cssText = 'display:block;color:#f87171;text-decoration:none;padding:8px 10px;border-radius:6px;margin:2px 4px;';
+    logout.onmouseenter = () => logout.style.background = '#2d1a1a';
+    logout.onmouseleave = () => logout.style.background = 'transparent';
+    sb.appendChild(logout);
+
     document.body.appendChild(sb);
 
     // Toggle button

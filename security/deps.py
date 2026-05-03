@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import hmac
 import os
 import time
 from typing import Dict, Tuple
@@ -8,6 +10,93 @@ from fastapi import HTTPException, Request
 
 
 _RL_STORE: Dict[Tuple[str, str], Tuple[int, float]] = {}
+
+
+# ── Session helpers ──────────────────────────────────────────────────────
+
+_SESSION_COOKIE = "budget_buddy_session"
+_SESSION_MAX_AGE = 3600 * 24 * 30  # 30 days (for remember-me)
+_SESSION_MAX_AGE_DEFAULT = 3600 * 8  # 8 hours (default non-remember)
+
+
+def _session_secret() -> str | None:
+    """Return the HMAC signing secret derived from APP_ACCESS_PIN."""
+    pin = os.getenv("APP_ACCESS_PIN")
+    if not pin:
+        return None
+    # Derive a stable secret from the pin so we don't need a separate secret
+    return hashlib.sha256(pin.encode()).hexdigest()
+
+
+def _sign_session(value: str, secret: str) -> str:
+    """Sign a session value with HMAC-SHA256."""
+    return hmac.new(secret.encode(), value.encode(), hashlib.sha256).hexdigest()
+
+
+def _make_session_cookie(secret: str, max_age: int) -> str:
+    """Build signed session cookie value."""
+    expiry = str(int(time.time()) + max_age)
+    payload = f"authenticated|{expiry}"
+    sig = _sign_session(payload, secret)
+    return f"{payload}|{sig}"
+
+
+def _verify_session_cookie(value: str, secret: str) -> bool:
+    """Verify a signed session cookie value and check expiry."""
+    try:
+        parts = value.split("|")
+        if len(parts) != 3:
+            return False
+        status, expiry_str, sig = parts
+        if status != "authenticated":
+            return False
+        # Verify signature
+        payload = f"{status}|{expiry_str}"
+        expected = _sign_session(payload, secret)
+        if not hmac.compare_digest(expected, sig):
+            return False
+        # Check expiry
+        if int(expiry_str) < time.time():
+            return False
+        return True
+    except (ValueError, IndexError):
+        return False
+
+
+def is_session_valid(request: Request) -> bool:
+    """Check if the request has a valid session cookie."""
+    secret = _session_secret()
+    if not secret:
+        # No PIN configured — no auth required (dev mode)
+        return True
+    cookie = request.cookies.get(_SESSION_COOKIE)
+    if not cookie:
+        return False
+    return _verify_session_cookie(cookie, secret)
+
+
+def require_session(request: Request) -> None:
+    """Redirect to /login if no valid session cookie."""
+    if not is_session_valid(request):
+        raise HTTPException(status_code=303, detail="Login required", headers={"Location": "/login"})
+
+
+def get_session_max_age(remember: bool) -> int:
+    """Return session max age based on remember-me flag."""
+    if remember:
+        return _SESSION_MAX_AGE
+    return _SESSION_MAX_AGE_DEFAULT
+
+
+def build_session_cookie(remember: bool) -> tuple[str, str, int]:
+    """Build a session cookie value, name, and max-age.
+    Returns (name, value, max_age)."""
+    secret = _session_secret()
+    if not secret:
+        raise RuntimeError("APP_ACCESS_PIN not configured")
+    max_age = get_session_max_age(remember)
+    value = _make_session_cookie(secret, max_age)
+    return (_SESSION_COOKIE, value, max_age)
 
 
 def _admin_token() -> str | None:

@@ -1,0 +1,111 @@
+<!doctype html>
+<html>
+  <head>
+    <title>Budget Buddy — Login</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <style>
+      * { box-sizing: border-box; }
+      body {
+        font-family: "Segoe UI", sans-serif;
+        margin: 0;
+        min-height: 100vh;
+        background: #1e1e2f;
+        color: #ddd;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      .login-card {
+        background: #2e2e3e;
+        padding: 2.5em 2em;
+        border-radius: 12px;
+        box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+        width: 100%;
+        max-width: 380px;
+        text-align: center;
+      }
+      .login-card h1 {
+        margin-top: 0;
+        font-size: 1.6em;
+        color: #fff;
+      }
+      .login-card p {
+        color: #aaa;
+        margin-bottom: 1.5em;
+      }
+      .login-card input[type="password"] {
+        width: 100%;
+        padding: 0.75em;
+        font-size: 1.2em;
+        text-align: center;
+        letter-spacing: 0.3em;
+        border: 1px solid #555;
+        border-radius: 6px;
+        background: #1e1e2f;
+        color: #eee;
+        outline: none;
+        transition: border-color 0.2s;
+      }
+      .login-card input[type="password"]:focus {
+        border-color: #4477dd;
+      }
+      .login-card label.checkbox {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 0.5em;
+        margin: 1em 0;
+        color: #bbb;
+        font-size: 0.9em;
+        cursor: pointer;
+      }
+      .login-card label.checkbox input {
+        accent-color: #4477dd;
+      }
+      .login-card button {
+        width: 100%;
+        padding: 0.7em;
+        font-size: 1em;
+        border: none;
+        border-radius: 6px;
+        background: #4477dd;
+        color: white;
+        cursor: pointer;
+        transition: background 0.2s;
+      }
+      .login-card button:hover {
+        background: #3455aa;
+      }
+      .error {
+        color: #f87171;
+        margin-bottom: 1em;
+        font-size: 0.9em;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="login-card">
+      <h1>🔐 Budget Buddy</h1>
+      <p>Enter access PIN to continue</p>
+      {% if error %}
+      <div class="error">{{ error }}</div>
+      {% endif %}
+      <form method="post" action="{{ request.url_for('login_page') }}">
+        <input
+          type="password"
+          name="pin"
+          placeholder="Access PIN"
+          autocomplete="off"
+          inputmode="numeric"
+          autofocus
+          required
+        />
+        <label class="checkbox">
+          <input type="checkbox" name="remember" value="yes" />
+          Remember me (30 days)
+        </label>
+        <button type="submit">Sign In</button>
+      </form>
+    </div>
+  </body>
+</html>

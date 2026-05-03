@@ -4,10 +4,12 @@ from datetime import date
 from pathlib import Path
 from typing import Optional
 import sqlite3
+import uuid
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 
 from forecast.calendar import _default_db_path
+from security.deps import require_auth, require_csrf, rate_limit
 
 
 router = APIRouter()
@@ -109,5 +111,103 @@ def list_transactions(
             }
             for r in rows
         ],
+    }
+
+
+@router.post("/api/transactions/quick-add")
+async def quick_add_transaction(request: Request):
+    """Quick-add a single transaction with minimal fields.
+
+    Body (JSON):
+    - amount_cents: int (positive = outflow, negative = inflow)
+    - payee: str (required)
+    - category_id: int | None (optional)
+    - memo: str | None (optional)
+    - account_id: int | None (optional, defaults to first active account)
+    - posted_at: str | None (optional, defaults to today YYYY-MM-DD)
+    """
+    require_auth(request)
+    require_csrf(request)
+    rate_limit(request, scope="quick-add", limit=30, window_s=60)
+
+    try:
+        payload = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON body")
+
+    amount_cents = payload.get("amount_cents")
+    if amount_cents is None:
+        raise HTTPException(status_code=400, detail="'amount_cents' is required")
+    try:
+        amount_cents = int(amount_cents)
+    except (ValueError, TypeError):
+        raise HTTPException(status_code=400, detail="'amount_cents' must be an integer")
+
+    payee = (payload.get("payee") or "").strip()
+    if not payee:
+        raise HTTPException(status_code=400, detail="'payee' is required")
+
+    posted_at = (payload.get("posted_at") or "").strip()
+    if not posted_at:
+        posted_at = date.today().isoformat()
+    else:
+        try:
+            date.fromisoformat(posted_at)
+        except Exception:
+            raise HTTPException(status_code=400, detail="'posted_at' must be YYYY-MM-DD")
+
+    memo = (payload.get("memo") or "").strip() or None
+    category_id = payload.get("category_id")
+    if category_id is not None:
+        try:
+            category_id = int(category_id)
+        except (ValueError, TypeError):
+            raise HTTPException(status_code=400, detail="'category_id' must be an integer")
+
+    dbp = _default_db_path()
+    with _connect(dbp) as conn:
+        # Resolve account
+        account_id = payload.get("account_id")
+        if account_id is not None:
+            try:
+                account_id = int(account_id)
+            except (ValueError, TypeError):
+                raise HTTPException(status_code=400, detail="'account_id' must be an integer")
+            row = conn.execute("SELECT 1 FROM accounts WHERE id = ?", (account_id,)).fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail=f"Account {account_id} not found")
+        else:
+            # Default to first active account
+            row = conn.execute(
+                "SELECT id FROM accounts WHERE is_active = 1 ORDER BY id LIMIT 1"
+            ).fetchone()
+            if not row:
+                raise HTTPException(status_code=400, detail="No active accounts found; create an account first")
+            account_id = int(row["id"])
+
+        # Store transaction (negative = outflow in this system)
+        if amount_cents > 0:
+            amount_cents = -abs(amount_cents)
+
+        idem = f"quick-{uuid.uuid4()}"
+        conn.execute(
+            """
+            INSERT INTO transactions(
+                idempotency_key, account_id, posted_at, amount_cents, payee, memo,
+                category_id, source, is_cleared
+            ) VALUES (?,?,?,?,?,?,?,?,?)
+            """,
+            (idem, account_id, posted_at, amount_cents, payee, memo, category_id, "quick-add", 1),
+        )
+        conn.commit()
+
+    return {
+        "status": "ok",
+        "idempotency_key": idem,
+        "amount_cents": amount_cents,
+        "payee": payee,
+        "posted_at": posted_at,
+        "account_id": account_id,
+        "source": "quick-add",
     }
 

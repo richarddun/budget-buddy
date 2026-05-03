@@ -272,6 +272,9 @@
         <!-- legacy static sidebar removed; dynamic sidebar is injected by sidebar.js -->
 
         <div id="main">
+            <div style="text-align: right; padding: 0.5em 1em 0 0;">
+                <a href="{{ request.url_for('logout') }}" style="color: #f87171; font-size: 0.85em; text-decoration: none;" title="Sign out">🚪 Sign out</a>
+            </div>
             <span id="title"><h1>💬 AI Budgeting Assistant Chat</h1></span>
 
             <div id="chatbox" class="chatbox">

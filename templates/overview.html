@@ -72,6 +72,20 @@
         <div id="spend-result" aria-live="polite" style="margin-top:10px"></div>
       </div>
 
+      <div class="card" style="margin-top:12px" aria-labelledby="lbl-quick-add">
+        <div id="lbl-quick-add" class="label">➕ Quick Add Transaction</div>
+        <form id="quick-add-form" class="row" style="gap:8px; flex-wrap: wrap;">
+          <input id="qa-amount" name="amount" type="number" inputmode="decimal" step="0.01" min="0" required
+                 placeholder="Amount (€)" aria-required="true"
+                 style="flex:1; min-width:100px; background:#0b1222; color:var(--text); border:1px solid #374151; border-radius:6px; padding:8px 10px" />
+          <input id="qa-payee" name="payee" type="text" required
+                 placeholder="Payee (e.g. Centra)" aria-required="true"
+                 style="flex:2; min-width:140px; background:#0b1222; color:var(--text); border:1px solid #374151; border-radius:6px; padding:8px 10px" />
+          <button type="submit" style="background:#2563eb; color:white; border:none; border-radius:6px; padding:8px 14px; cursor:pointer; font-weight:600">+ Add</button>
+        </form>
+        <div id="qa-result" aria-live="polite" style="margin-top:8px; font-size:0.9em"></div>
+      </div>
+
       <div class="card" style="margin-top:12px" aria-labelledby="lbl-export">
         <div id="lbl-export" class="label">Questionnaire Export</div>
         <div class="row" style="gap:8px; align-items:center">
@@ -176,7 +190,46 @@
         }
       });
 
-      // Minimal Questionnaire Export wiring
+      // ── Quick Add Transaction ──
+      const qaForm = document.getElementById('quick-add-form');
+      const qaResult = document.getElementById('qa-result');
+
+      qaForm?.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        qaResult.textContent = '';
+        const amountStr = (document.getElementById('qa-amount')?.value || '').trim();
+        const payee = (document.getElementById('qa-payee')?.value || '').trim();
+        if (!amountStr || !payee) { qaResult.textContent = 'Please enter amount and payee.'; return; }
+        const amount = parseFloat(amountStr);
+        if (!Number.isFinite(amount) || amount <= 0) { qaResult.textContent = 'Amount must be a positive number.'; return; }
+        const amountCents = Math.round(amount * 100);
+        const payload = {
+          amount_cents: amountCents,
+          payee: payee,
+          posted_at: new Date().toISOString().slice(0, 10),
+        };
+        try {
+          const res = await fetch('{{ request.url_for("index") }}api/transactions/quick-add'.replace(/\/$/, ''), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', ...csrfHeader(), ...adminHeader() },
+            body: JSON.stringify(payload),
+          });
+          if (!res.ok) {
+            const j = await res.json().catch(() => ({}));
+            throw new Error(j.detail || 'Failed to add transaction');
+          }
+          const out = await res.json();
+          qaResult.innerHTML = `<span style="color: #4ade80;">✅ Added €${amount.toFixed(2)} at ${payee}</span>`;
+          document.getElementById('qa-amount').value = '';
+          document.getElementById('qa-payee').value = '';
+          // Refresh overview after a short delay
+          setTimeout(loadOverview, 1500);
+        } catch (err) {
+          qaResult.innerHTML = `<span style="color: #f87171;">❌ ${String(err.message || err)}</span>`;
+        }
+      });
+
+      // ── Minimal Questionnaire Export wiring
       const exportBtn = document.getElementById('btn-export');
       const exportResult = document.getElementById('export-result');
       exportBtn?.addEventListener('click', async () => {

@@ -3,7 +3,7 @@ import pdb
 import logging
 logger = logging.getLogger("uvicorn.error")
 from fastapi import FastAPI, Request, Form, UploadFile, File
-from fastapi.responses import HTMLResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, StreamingResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
 from agents.budget_agent import budget_agent
@@ -16,6 +16,7 @@ import asyncio
 from ynab_sdk_client import YNABSdkClient as ynab
 import os
 import json
+import hmac
 from datetime import datetime
 from dotenv import load_dotenv
 from db.migrate import run_migrations
@@ -34,7 +35,7 @@ from forecast.calendar import Entry as FcEntry
 from datetime import date as _date
 from jobs.nightly_snapshot import _compute_digest as _compute_digest_from_snapshot
 from security.logging_filters import RedactSecretsFilter
-from security.deps import require_auth as _require_auth_dep, require_csrf as _require_csrf_dep, rate_limit as _rate_limit_dep
+from security.deps import require_auth as _require_auth_dep, require_csrf as _require_csrf_dep, rate_limit as _rate_limit_dep, require_session as _require_session_dep, is_session_valid as _is_session_valid, build_session_cookie as _build_session_cookie
 
 def check_api_keys():
     """Return a warning message if API keys are missing."""
@@ -476,8 +477,50 @@ def _ensure_today_digest_message_inserted(digest: dict | None) -> None:
         logger.exception(f"[DIGEST] Failed to upsert system message: {e}")
 
 
+@app.get("/login", response_class=HTMLResponse)
+async def login_page(request: Request, error: str | None = None):
+    """Render the login page. If already authenticated, redirect to home."""
+    if _is_session_valid(request):
+        return RedirectResponse(url="/", status_code=303)
+    return templates.TemplateResponse("login.html", {"request": request, "error": error})
+
+
+@app.post("/login", response_class=HTMLResponse)
+async def login_submit(request: Request, pin: str = Form(...), remember: str | None = Form(None)):
+    """Validate PIN and set session cookie."""
+    expected = os.getenv("APP_ACCESS_PIN")
+    if not expected:
+        # No PIN configured — auto-login (dev mode)
+        return RedirectResponse(url="/", status_code=303)
+    if not hmac.compare_digest(pin.encode(), expected.encode()):
+        return await login_page(request, error="Invalid PIN. Please try again.")
+    # Build signed session cookie
+    remember_bool = remember == "yes"
+    name, value, max_age = _build_session_cookie(remember_bool)
+    resp = RedirectResponse(url="/", status_code=303)
+    resp.set_cookie(
+        key=name,
+        value=value,
+        max_age=max_age,
+        httponly=True,
+        samesite="lax",
+        secure=False,  # Set True if behind HTTPS
+        path="/",
+    )
+    return resp
+
+
+@app.get("/logout")
+async def logout():
+    """Clear session cookie and redirect to login."""
+    resp = RedirectResponse(url="/login", status_code=303)
+    resp.delete_cookie(key="budget_buddy_session", path="/")
+    return resp
+
+
 @app.get("/", response_class=HTMLResponse)
 async def index(request: Request):
+    _require_session_dep(request)
     # Compute digest and ensure a single system message for today exists
     digest = compute_latest_digest()
     _ensure_today_digest_message_inserted(digest)
@@ -490,23 +533,27 @@ async def index(request: Request):
 
 @app.get("/overview", response_class=HTMLResponse)
 async def overview(request: Request):
+    _require_session_dep(request)
     csrf_token = os.getenv("CSRF_TOKEN") or None
     return templates.TemplateResponse("overview.html", {"request": request, "csrf_token": csrf_token})
 
 @app.get("/admin", response_class=HTMLResponse)
 async def admin_settings(request: Request):
+    _require_session_dep(request)
     """Lightweight admin settings page for configurable features (anchors, floors)."""
     csrf_token = os.getenv("CSRF_TOKEN") or None
     return templates.TemplateResponse("admin.html", {"request": request, "csrf_token": csrf_token, "currency_symbol": CURRENCY_SYMBOL})
 
 @app.get("/transactions", response_class=HTMLResponse)
 async def transactions_browser(request: Request):
+    _require_session_dep(request)
     """Simple transaction browser to verify local data."""
     csrf_token = os.getenv("CSRF_TOKEN") or None
     return templates.TemplateResponse("transactions.html", {"request": request, "csrf_token": csrf_token, "currency_symbol": CURRENCY_SYMBOL})
 
 @app.get("/commitments", response_class=HTMLResponse)
 async def commitments_page(request: Request):
+    _require_session_dep(request)
     """Simple commitments dashboard with totals and list."""
     csrf_token = os.getenv("CSRF_TOKEN") or None
     return templates.TemplateResponse("commitments.html", {"request": request, "csrf_token": csrf_token, "currency_symbol": CURRENCY_SYMBOL})
@@ -583,6 +630,7 @@ async def purge_ynab_cache(request: Request):
 
 @app.get("/budget-health", response_class=HTMLResponse)
 async def get_budget_health(request: Request):
+    _require_session_dep(request)
     """Generate budget health report via Jinja template"""
     try:
         analyzer = BudgetHealthAnalyzer(BUDGET_ID)
@@ -1040,11 +1088,13 @@ from fastapi.responses import HTMLResponse
 
 @app.get("/uploads", response_class=HTMLResponse)
 async def view_uploads(request: Request):
+    _require_session_dep(request)
     files = [f.name for f in UPLOAD_DIR.iterdir() if f.is_file()]
     return templates.TemplateResponse("uploads.html", {"request": request, "files": files})
 
 @app.get("/unmatched", response_class=HTMLResponse)
 async def view_unmatched(request: Request):
+    _require_session_dep(request)
     return templates.TemplateResponse("unmatched.html", {"request": request})
 
 @app.get("/sse-test")
