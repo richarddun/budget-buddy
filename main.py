@@ -134,6 +134,11 @@ try:
 except Exception:
     budget_targets_router = None
 
+try:
+    from api.reports import router as reports_router
+except Exception:
+    reports_router = None
+
 # Include API routers at import time for conventional startup
 if forecast_router is not None:
     app.include_router(forecast_router)
@@ -175,6 +180,9 @@ if recurring_router is not None:
 
 if budget_targets_router is not None:
     app.include_router(budget_targets_router)
+
+if reports_router is not None:
+    app.include_router(reports_router)
 
 # --- File upload Setup ---
 UPLOAD_DIR = Path("uploaded_receipts")
@@ -581,6 +589,14 @@ async def budget_targets_page(request: Request):
     """Monthly budget targets / envelope system with progress bars and warnings."""
     csrf_token = os.getenv("CSRF_TOKEN") or None
     return templates.TemplateResponse("budget_targets.html", {"request": request, "csrf_token": csrf_token, "currency_symbol": CURRENCY_SYMBOL})
+
+
+@app.get("/spending-reports", response_class=HTMLResponse)
+async def spending_reports_page(request: Request):
+    _require_session_dep(request)
+    """Spending reports dashboard with charts and breakdowns."""
+    csrf_token = os.getenv("CSRF_TOKEN") or None
+    return templates.TemplateResponse("spending_reports.html", {"request": request, "csrf_token": csrf_token, "currency_symbol": CURRENCY_SYMBOL})
 
 
 @app.get("/transactions/{idempotency_key}/splits", response_class=HTMLResponse)

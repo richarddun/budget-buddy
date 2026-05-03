@@ -1,0 +1,447 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Spending Reports — Budget Buddy</title>
+    {% if csrf_token %}<meta name="csrf-token" content="{{ csrf_token }}">{% endif %}
+    <meta name="currency-symbol" content="{{ currency_symbol or '€' }}">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <style>
+      :root {
+        --bg: #0f172a; --panel: #111827; --card: #1f2937;
+        --text: #e5e7eb; --muted: #9ca3af;
+        --accent: #60a5fa; --good: #22c55e; --warn: #eab308; --bad: #ef4444;
+      }
+      body { margin:0; font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,'Helvetica Neue',Arial; background:var(--bg); color:var(--text); }
+      .container { max-width:1100px; margin:0 auto; padding:20px; }
+      .header { display:flex; justify-content:space-between; align-items:center; margin-bottom:16px; flex-wrap:wrap; gap:8px; }
+      .back { display:inline-block; padding:8px 12px; border-radius:6px; background:var(--accent); color:#06142b; text-decoration:none; font-weight:600; }
+      .panel { background:var(--panel); border-radius:10px; padding:16px; margin-bottom:14px; border:1px solid #1f2937; }
+      .section-title { font-size:16px; font-weight:700; margin:0 0 10px 0; }
+      .muted { color:var(--muted); font-size:12px; }
+      .grid-2 { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+      @media (max-width:900px) { .grid-2 { grid-template-columns:1fr; } }
+      .grid-3 { display:grid; grid-template-columns:1fr 1fr 1fr; gap:12px; }
+      @media (max-width:800px) { .grid-3 { grid-template-columns:1fr; } }
+      .stat-card { background:var(--card); border-radius:8px; padding:12px; text-align:center; }
+      .stat-value { font-size:22px; font-weight:700; }
+      .stat-label { font-size:12px; color:var(--muted); }
+      table { width:100%; border-collapse:collapse; }
+      th, td { border-bottom:1px solid #1f2937; padding:8px; text-align:left; }
+      th { color:var(--muted); font-weight:600; font-size:13px; }
+      .badge { display:inline-block; background:#374151; border-radius:10px; padding:0 6px; font-size:11px; color:var(--muted); margin-left:4px; }
+      .pill { border-radius:999px; padding:2px 8px; font-size:12px; white-space:nowrap; }
+      .pill.up { background:rgba(239,68,68,0.2); color:#fecaca; }
+      .pill.down { background:rgba(34,197,94,0.2); color:#86efac; }
+      .pill.flat { background:rgba(156,163,175,0.2); color:#d1d5db; }
+
+      /* Bar chart (CSS-based) */
+      .bar-chart { display:flex; align-items:flex-end; gap:4px; height:200px; padding:10px 0; position:relative; }
+      .bar-group { flex:1; display:flex; flex-direction:column; align-items:center; height:100%; justify-content:flex-end; position:relative; }
+      .bar { width:100%; max-width:40px; border-radius:4px 4px 0 0; position:relative; transition:height 0.3s ease; min-height:2px; }
+      .bar.income { background:var(--good); }
+      .bar.spending { background:var(--bad); }
+      .bar.net.positive { background:var(--good); }
+      .bar.net.negative { background:var(--bad); }
+      .bar-label { font-size:10px; color:var(--muted); margin-top:4px; text-align:center; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:60px; }
+      .bar-value { position:absolute; top:-18px; left:50%; transform:translateX(-50%); font-size:10px; color:var(--text); white-space:nowrap; }
+
+      /* Donut chart (CSS-based) */
+      .donut-container { display:flex; align-items:center; gap:16px; flex-wrap:wrap; }
+      .donut-legend { flex:1; min-width:200px; }
+      .donut-item { display:flex; align-items:center; gap:8px; padding:4px 0; }
+      .donut-swatch { width:12px; height:12px; border-radius:3px; flex-shrink:0; }
+      .donut-pct { font-weight:600; min-width:40px; text-align:right; }
+      .donut-bar-track { flex:1; height:6px; background:#1f2937; border-radius:3px; overflow:hidden; }
+      .donut-bar-fill { height:100%; border-radius:3px; }
+
+      /* YoY table */
+      .yoy-up { color:var(--bad); }
+      .yoy-down { color:var(--good); }
+      .yoy-flat { color:var(--muted); }
+    </style>
+  </head>
+  <body>
+    <script>window.APP_BASE = '{{ request.url_for("index") }}'.replace(/\/$/, '');</script>
+    <script src="{{ request.url_for('static', path='sidebar.js') }}"></script>
+    <div class="container">
+      <div class="header">
+        <h1 style="margin:0">📊 Spending Reports</h1>
+        <div style="display:flex; gap:8px">
+          <button id="btn-refresh" type="button" style="background:var(--accent)">⟳ Refresh</button>
+          <a class="back" href="{{ request.url_for('index') }}">← Back to Chat</a>
+        </div>
+      </div>
+
+      <!-- Period selector -->
+      <div class="panel" style="display:flex; gap:12px; align-items:center; flex-wrap:wrap">
+        <label class="muted">Chart Months</label>
+        <select id="chart-months" style="background:#0b1222; color:var(--text); border:1px solid #374151; border-radius:6px; padding:4px 8px">
+          <option value="3">3 months</option>
+          <option value="6">6 months</option>
+          <option value="12" selected>12 months</option>
+          <option value="24">24 months</option>
+        </select>
+        <label class="muted" style="margin-left:8px">Breakdown Month</label>
+        <select id="breakdown-month" style="background:#0b1222; color:var(--text); border:1px solid #374151; border-radius:6px; padding:4px 8px"></select>
+        <label class="muted" style="margin-left:8px">Category Min %</label>
+        <input id="min-pct" type="number" value="1" min="0.5" max="50" step="0.5" style="width:60px; background:#0b1222; color:var(--text); border:1px solid #374151; border-radius:6px; padding:4px 6px" />
+      </div>
+
+      <!-- Summary stats -->
+      <div id="summary-stats" class="grid-3"></div>
+
+      <!-- Monthly bar chart -->
+      <div class="panel">
+        <div class="section-title">Monthly Income vs Spending</div>
+        <div class="muted" style="margin-bottom:6px">Green = income, Red = spending</div>
+        <div id="monthly-chart" class="bar-chart"></div>
+      </div>
+
+      <!-- Net bar chart -->
+      <div class="panel">
+        <div class="section-title">Monthly Net</div>
+        <div class="muted" style="margin-bottom:6px">Positive = surplus, Negative = deficit</div>
+        <div id="net-chart" class="bar-chart"></div>
+      </div>
+
+      <!-- Category breakdown + Top payees side by side -->
+      <div class="grid-2">
+        <div class="panel">
+          <div class="section-title">Category Breakdown <span id="cat-breakdown-month" class="badge"></span></div>
+          <div id="category-breakdown"></div>
+        </div>
+        <div class="panel">
+          <div class="section-title">Top Payees <span id="top-payees-period" class="badge"></span></div>
+          <div id="top-payees">
+            <div class="muted">Loading...</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Year-over-Year comparison -->
+      <div class="panel">
+        <div class="section-title">Year-over-Year Comparison</div>
+        <div class="muted" style="margin-bottom:8px">Months where data exists in both years. Red = spending increased, Green = decreased.</div>
+        <div style="overflow:auto">
+          <table id="yoy-table">
+            <thead>
+              <tr>
+                <th>Month</th>
+                <th>Previous Year ({{ currency_symbol or '€' }})</th>
+                <th>Current Year ({{ currency_symbol or '€' }})</th>
+                <th>Change ({{ currency_symbol or '€' }})</th>
+                <th>Change (%)</th>
+                <th>Direction</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      const CSRF = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content');
+      const CUR = document.querySelector('meta[name="currency-symbol"]')?.getAttribute('content') || '€';
+      const BASE = window.APP_BASE || '';
+
+      function fmtCents(c) {
+        if (c === null || c === undefined) return '—';
+        const sign = c < 0 ? '-' : '';
+        const abs = Math.abs(c);
+        return sign + CUR + (abs/100).toFixed(2);
+      }
+
+      // ─── Month options ──────────────────────────────────────────
+      function populateMonthSelect(sel) {
+        const now = new Date();
+        sel.innerHTML = '';
+        for (let i = 0; i < 12; i++) {
+          const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+          const val = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+          const label = d.toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
+          const opt = document.createElement('option');
+          opt.value = val;
+          opt.textContent = label;
+          if (i === 0) opt.selected = true;
+          sel.appendChild(opt);
+        }
+      }
+
+      // ─── Color palette ──────────────────────────────────────────
+      const COLORS = [
+        '#60a5fa', '#34d399', '#fbbf24', '#f87171', '#a78bfa',
+        '#fb923c', '#2dd4bf', '#f472b6', '#4ade80', '#38bdf8',
+        '#e879f9', '#facc15', '#14b8a6', '#c084fc', '#fb7185',
+      ];
+
+      function getColor(i) { return COLORS[i % COLORS.length]; }
+
+      // ─── Data loading ───────────────────────────────────────────
+      async function fetchJSON(url) {
+        const r = await fetch(url);
+        if (!r.ok) throw new Error('HTTP ' + r.status + ': ' + await r.text().catch(()=>''));
+        return r.json();
+      }
+
+      async function loadData() {
+        const chartMonths = parseInt(document.getElementById('chart-months').value) || 12;
+        const bmVal = document.getElementById('breakdown-month').value;
+        const minPct = parseFloat(document.getElementById('min-pct').value) || 1;
+
+        try {
+          const [summary, breakdown, yoy, payees] = await Promise.all([
+            fetchJSON(`${BASE}/api/reports/monthly-summary?months=${chartMonths}`),
+            bmVal ? fetchJSON(`${BASE}/api/reports/category-breakdown?year=${bmVal.split('-')[0]}&month=${parseInt(bmVal.split('-')[1])}&min_pct=${minPct}`) : Promise.resolve({ categories: [] }),
+            fetchJSON(`${BASE}/api/reports/year-over-year?months_back=24`),
+            fetchJSON(`${BASE}/api/reports/top-payees?limit=10&months=3`),
+          ]);
+
+          renderSummary(summary);
+          renderBarChart('monthly-chart', summary, ['income', 'spending']);
+          renderNetChart('net-chart', summary);
+          renderCategoryBreakdown(breakdown);
+          renderYearOverYear(yoy);
+          renderTopPayees(payees);
+        } catch (e) {
+          document.getElementById('monthly-chart').innerHTML = `<div class="muted">Failed to load: ${e.message}</div>`;
+        }
+      }
+
+      // ─── Summary stats ──────────────────────────────────────────
+      function renderSummary(summary) {
+        const container = document.getElementById('summary-stats');
+        const totalIncome = (summary.income || []).reduce((a, b) => a + b, 0);
+        const totalSpending = (summary.spending || []).reduce((a, b) => a + b, 0);
+        const avgSpending = summary.spending.length > 0 ? totalSpending / summary.spending.length : 0;
+        const net = totalIncome - totalSpending;
+
+        container.innerHTML = `
+          <div class="stat-card">
+            <div class="stat-value" style="color:var(--good)">${fmtCents(totalIncome)}</div>
+            <div class="stat-label">Total Income (${summary.labels.length} mo)</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-value" style="color:var(--bad)">${fmtCents(totalSpending)}</div>
+            <div class="stat-label">Total Spending (${summary.labels.length} mo)</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-value" style="color:${net >= 0 ? 'var(--good)' : 'var(--bad)'}">${fmtCents(net)}</div>
+            <div class="stat-label">Net (avg ${fmtCents(Math.round(avgSpending))}/mo)</div>
+          </div>
+        `;
+      }
+
+      // ─── Bar chart ──────────────────────────────────────────────
+      function renderBarChart(containerId, summary, series) {
+        const container = document.getElementById(containerId);
+        const labels = summary.labels || [];
+        const dataMap = {};
+        series.forEach(s => { dataMap[s] = summary[s] || []; });
+
+        if (labels.length === 0) {
+          container.innerHTML = '<div class="muted">No data available</div>';
+          return;
+        }
+
+        // Find max value for scaling
+        let maxVal = 0;
+        series.forEach(s => {
+          (dataMap[s] || []).forEach(v => { if (Math.abs(v) > maxVal) maxVal = Math.abs(v); });
+        });
+        if (maxVal === 0) maxVal = 1;
+
+        container.innerHTML = '';
+        labels.forEach((label, i) => {
+          const group = document.createElement('div');
+          group.className = 'bar-group';
+
+          series.forEach((s, si) => {
+            const val = (dataMap[s] || [])[i] || 0;
+            const pct = (val / maxVal) * 100;
+            const bar = document.createElement('div');
+            bar.className = `bar ${s}`;
+            bar.style.height = Math.max(pct, 2) + '%';
+
+            if (val > 0) {
+              const vlabel = document.createElement('div');
+              vlabel.className = 'bar-value';
+              vlabel.textContent = fmtCents(val);
+              bar.appendChild(vlabel);
+            }
+
+            group.appendChild(bar);
+          });
+
+          const lbl = document.createElement('div');
+          lbl.className = 'bar-label';
+          lbl.textContent = label.length > 7 ? label.slice(0, 7) : label;
+          group.appendChild(lbl);
+
+          container.appendChild(group);
+        });
+      }
+
+      // ─── Net chart ──────────────────────────────────────────────
+      function renderNetChart(containerId, summary) {
+        const container = document.getElementById(containerId);
+        const labels = summary.labels || [];
+        const net = summary.net || [];
+
+        if (labels.length === 0) {
+          container.innerHTML = '<div class="muted">No data available</div>';
+          return;
+        }
+
+        let maxAbs = 0;
+        net.forEach(v => { if (Math.abs(v) > maxAbs) maxAbs = Math.abs(v); });
+        if (maxAbs === 0) maxAbs = 1;
+
+        // Need a midpoint for zero line
+        container.innerHTML = '';
+        net.forEach((val, i) => {
+          const group = document.createElement('div');
+          group.className = 'bar-group';
+
+          const bar = document.createElement('div');
+          const pct = (Math.abs(val) / maxAbs) * 100;
+          bar.className = `bar net ${val >= 0 ? 'positive' : 'negative'}`;
+          bar.style.height = Math.max(pct, 2) + '%';
+
+          if (val !== 0) {
+            const vlabel = document.createElement('div');
+            vlabel.className = 'bar-value';
+            vlabel.textContent = fmtCents(val);
+            bar.appendChild(vlabel);
+          }
+
+          group.appendChild(bar);
+
+          const lbl = document.createElement('div');
+          lbl.className = 'bar-label';
+          lbl.textContent = labels[i].length > 7 ? labels[i].slice(0, 7) : labels[i];
+          group.appendChild(lbl);
+
+          container.appendChild(group);
+        });
+      }
+
+      // ─── Category breakdown ─────────────────────────────────────
+      function renderCategoryBreakdown(breakdown) {
+        const container = document.getElementById('category-breakdown');
+        const monthLabel = document.getElementById('cat-breakdown-month');
+        if (monthLabel) monthLabel.textContent = breakdown.label || '';
+
+        const categories = breakdown.categories || [];
+        if (categories.length === 0) {
+          container.innerHTML = '<div class="muted">No spending data for this month</div>';
+          return;
+        }
+
+        const grandTotal = breakdown.grand_total_cents || 0;
+        container.innerHTML = `<div class="muted" style="margin-bottom:8px">Total: ${fmtCents(grandTotal)}</div>`;
+        const list = document.createElement('div');
+        list.className = 'donut-container';
+
+        const legend = document.createElement('div');
+        legend.className = 'donut-legend';
+
+        categories.forEach((cat, i) => {
+          const pct = cat.percentage || 0;
+          const item = document.createElement('div');
+          item.className = 'donut-item';
+          item.innerHTML = `
+            <span class="donut-swatch" style="background:${getColor(i)}"></span>
+            <span style="flex:1">${cat.category_name}</span>
+            <span class="donut-pct">${pct.toFixed(1)}%</span>
+            <span class="muted" style="min-width:80px; text-align:right">${fmtCents(cat.total_cents)}</span>
+            <div class="donut-bar-track">
+              <div class="donut-bar-fill" style="width:${Math.min(pct, 100)}%; background:${getColor(i)}"></div>
+            </div>
+          `;
+          legend.appendChild(item);
+        });
+
+        list.appendChild(legend);
+        container.appendChild(list);
+      }
+
+      // ─── Year-over-Year ─────────────────────────────────────────
+      function renderYearOverYear(yoy) {
+        const tbody = document.querySelector('#yoy-table tbody');
+        tbody.innerHTML = '';
+
+        const comparisons = yoy.comparisons || [];
+        if (comparisons.length === 0) {
+          tbody.innerHTML = '<tr><td colspan="6" class="muted">No YoY data — need at least 2 years of history</td></tr>';
+          return;
+        }
+
+        comparisons.forEach(c => {
+          const tr = document.createElement('tr');
+          const dirClass = `pill ${c.direction}`;
+          const dirLabel = c.direction === 'up' ? '⬆ Up' : (c.direction === 'down' ? '⬇ Down' : '➡ Flat');
+          const changeClass = c.direction === 'up' ? 'yoy-up' : (c.direction === 'down' ? 'yoy-down' : 'yoy-flat');
+
+          tr.innerHTML = `
+            <td><strong>${c.month_label}</strong></td>
+            <td>${fmtCents(c.previous_total_cents)}</td>
+            <td>${fmtCents(c.current_total_cents)}</td>
+            <td class="${changeClass}">${c.change_cents >= 0 ? '+' : ''}${fmtCents(c.change_cents)}</td>
+            <td class="${changeClass}">${c.change_percentage >= 0 ? '+' : ''}${c.change_percentage}%</td>
+            <td><span class="${dirClass}">${dirLabel}</span></td>
+          `;
+          tbody.appendChild(tr);
+        });
+      }
+
+      // ─── Top payees ─────────────────────────────────────────────
+      function renderTopPayees(payees) {
+        const container = document.getElementById('top-payees');
+        const periodLabel = document.getElementById('top-payees-period');
+        if (periodLabel) periodLabel.textContent = `${payees.period_months || 3}mo`;
+
+        const items = payees.items || [];
+        if (items.length === 0) {
+          container.innerHTML = '<div class="muted">No spending data for this period</div>';
+          return;
+        }
+
+        let maxVal = 0;
+        items.forEach(p => { if (p.total_cents > maxVal) maxVal = p.total_cents; });
+        if (maxVal === 0) maxVal = 1;
+
+        const list = document.createElement('div');
+        items.forEach((p, i) => {
+          const pct = (p.total_cents / maxVal) * 100;
+          const item = document.createElement('div');
+          item.className = 'donut-item';
+          item.innerHTML = `
+            <span style="min-width:20px; font-weight:600; color:var(--muted)">#${i + 1}</span>
+            <span style="flex:1">${p.payee_name}</span>
+            <span class="muted" style="min-width:30px; text-align:right">×${p.txn_count}</span>
+            <span style="min-width:80px; text-align:right; font-weight:600">${fmtCents(p.total_cents)}</span>
+            <div class="donut-bar-track" style="width:120px">
+              <div class="donut-bar-fill" style="width:${pct}%; background:${getColor(i)}"></div>
+            </div>
+          `;
+          list.appendChild(item);
+        });
+        container.innerHTML = '';
+        container.appendChild(list);
+      }
+
+      // ─── Event wiring ───────────────────────────────────────────
+      document.addEventListener('DOMContentLoaded', () => {
+        populateMonthSelect(document.getElementById('breakdown-month'));
+        loadData();
+      });
+
+      document.getElementById('btn-refresh').addEventListener('click', loadData);
+      document.getElementById('chart-months').addEventListener('change', loadData);
+      document.getElementById('breakdown-month').addEventListener('change', loadData);
+      document.getElementById('min-pct').addEventListener('change', loadData);
+    </script>
+  </body>
+</html>
