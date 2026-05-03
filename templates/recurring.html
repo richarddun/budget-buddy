@@ -1,0 +1,390 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Recurring Templates</title>
+    {% if csrf_token %}<meta name="csrf-token" content="{{ csrf_token }}">{% endif %}
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <style>
+      body { margin:0; font-family: system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, 'Helvetica Neue', Arial; background:#0f172a; color:#e5e7eb; }
+      .container { max-width: 1100px; margin: 0 auto; padding: 20px; }
+      .header { display:flex; justify-content:space-between; align-items:center; margin-bottom: 12px; flex-wrap:wrap; gap:8px; }
+      .back { display:inline-block; padding:8px 12px; border-radius:6px; background:#3b82f6; color:#06142b; text-decoration:none; font-weight:600; }
+      .panel { background:#111827; border-radius:10px; padding:16px; margin-bottom:16px; border:1px solid #1f2937; }
+      .section-title { font-size:16px; font-weight:700; margin:0 0 10px 0; }
+      input, select { background:#0b1222; color:#e5e7eb; border:1px solid #374151; border-radius:6px; padding:6px 8px; }
+      table { width:100%; border-collapse:collapse; }
+      th, td { border-bottom:1px solid #1f2937; padding:8px; text-align:left; }
+      .muted { color:#9ca3af; font-size:12px; }
+      .neg { color:#fecaca; }
+      .pos { color:#86efac; }
+      .btn { background:#2563eb; color:#fff; border:none; border-radius:6px; padding:8px 12px; cursor:pointer }
+      .btn-sm { background:#2563eb; color:#fff; border:none; border-radius:4px; padding:4px 8px; cursor:pointer; font-size:12px; }
+      .btn-green { background:#10b981; }
+      .btn-red { background:#ef4444; }
+      .btn-amber { background:#f59e0b; }
+      .grid { display:grid; grid-template-columns: repeat(auto-fit, minmax(220px,1fr)); gap: 8px; }
+      .info-box { background:#1e293b; border-left:3px solid #3b82f6; padding:10px; border-radius:4px; margin:8px 0; }
+      .tag { display:inline-block; padding:2px 6px; border-radius:4px; font-size:11px; font-weight:600; }
+      .tag-active { background:#065f46; color:#6ee7b7; }
+      .tag-inactive { background:#7f1d1d; color:#fca5a5; }
+      .tag-auto { background:#1e3a5f; color:#93c5fd; }
+      .tag-manual { background:#5b2e0a; color:#fcd34d; }
+      .badge { display:inline-block; padding:1px 5px; border-radius:3px; font-size:11px; }
+      .badge-income { background:#065f46; color:#6ee7b7; }
+      .badge-expense { background:#7f1d1d; color:#fca5a5; }
+    </style>
+  </head>
+  <body>
+    <script>window.APP_BASE = '{{ request.url_for("index") }}'.replace(/\/$/, '');</script>
+    <script src="{{ request.url_for('static', path='sidebar.js') }}"></script>
+    <div class="container">
+      <div class="header">
+        <h1 style="margin:0">🔄 Recurring Templates</h1>
+        <a class="back" href="{{ request.url_for('index') }}">← Back to Chat</a>
+      </div>
+
+      <!-- Auth -->
+      <div class="panel">
+        <div class="section-title">🔐 Auth</div>
+        <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap">
+          <label>Admin Token
+            <input id="admin-token-input" placeholder="Paste token from /admin">
+          </label>
+          <button id="btn-save-token" class="btn" type="button">Save</button>
+          <span id="token-status" class="muted"></span>
+        </div>
+      </div>
+
+      <!-- Summary -->
+      <div class="panel">
+        <div class="section-title">📊 Summary</div>
+        <div class="grid">
+          <div><div class="muted">Total Templates</div><div id="total-count">—</div></div>
+          <div><div class="muted">Auto-Create On</div><div id="auto-count">—</div></div>
+          <div><div class="muted">Due This Month</div><div id="due-count">—</div></div>
+          <div><div class="muted">Monthly Total</div><div id="monthly-total">—</div></div>
+        </div>
+      </div>
+
+      <!-- Actions -->
+      <div class="panel">
+        <div class="section-title">⚡ Actions</div>
+        <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center">
+          <button id="btn-sync-commitments" class="btn btn-green" type="button">📥 Sync from Commitments</button>
+          <button id="btn-auto-create" class="btn btn-amber" type="button">🚀 Run Auto-Create Now</button>
+          <label style="display:flex; align-items:center; gap:4px">
+            <input id="dry-run-check" type="checkbox" checked>
+            <span class="muted">Dry run</span>
+          </label>
+          <button id="btn-refresh" class="btn" type="button">🔄 Refresh</button>
+          <span id="action-status" class="muted"></span>
+        </div>
+      </div>
+
+      <!-- Add Template -->
+      <div class="panel">
+        <div class="section-title">➕ Add Template</div>
+        <div style="display:flex; gap:8px; align-items:flex-end; flex-wrap:wrap">
+          <label>Name<br><input id="t-name" placeholder="e.g., Netflix Subscription"></label>
+          <label>Amount (EUR)<br><input id="t-amount" type="number" step="0.01" placeholder="14.99"></label>
+          <label>Due Rule<br>
+            <select id="t-rule">
+              <option value="MONTHLY">Monthly</option>
+              <option value="WEEKLY">Weekly</option>
+              <option value="BIWEEKLY">Biweekly</option>
+              <option value="ANNUAL">Annual</option>
+              <option value="ONE_OFF">One-off</option>
+            </select>
+          </label>
+          <label>Next Due<br><input id="t-next" type="date"></label>
+          <label>Account<br>
+            <select id="t-acct"><option value="">— Select —</option></select>
+          </label>
+          <label>Type<br>
+            <select id="t-type">
+              <option value="expense">Expense</option>
+              <option value="income">Income</option>
+            </select>
+          </label>
+          <label style="display:flex; align-items:center; gap:4px; margin-bottom:6px">
+            <input id="t-auto" type="checkbox" checked>
+            <span>Auto-create</span>
+          </label>
+          <button id="btn-add" class="btn btn-green" type="button">Add</button>
+          <span id="add-status" class="muted"></span>
+        </div>
+      </div>
+
+      <!-- Template List -->
+      <div class="panel">
+        <div class="section-title">📋 Templates</div>
+        <div style="overflow:auto">
+          <table id="tbl">
+            <thead>
+              <tr>
+                <th style="width:45px">ID</th>
+                <th>Name</th>
+                <th style="width:110px">Amount</th>
+                <th style="width:80px">Rule</th>
+                <th style="width:120px">Next Due</th>
+                <th style="width:90px">Account</th>
+                <th style="width:70px">Type</th>
+                <th style="width:75px">Mode</th>
+                <th style="width:55px">Active</th>
+                <th style="width:130px">Actions</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Recent Instances -->
+      <div class="panel">
+        <div class="section-title">📜 Recent Auto-Create History</div>
+        <div style="overflow:auto">
+          <table id="inst-tbl">
+            <thead>
+              <tr>
+                <th style="width:45px">ID</th>
+                <th>Template</th>
+                <th style="width:120px">Due Date</th>
+                <th>Status</th>
+                <th style="width:280px">Transaction Key</th>
+              </tr>
+            </thead>
+            <tbody><tr><td colspan="5" class="muted">Loading...</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      function fmtCents(c) { const s = c<0?'-':''; const a=Math.abs(c); return s + ({{ currency_symbol|tojson|safe }} || '€') + (a/100).toFixed(2); }
+      async function fetchJSON(u, opts) { const r = await fetch(u, opts); if (!r.ok) throw new Error('HTTP '+r.status); return r.json(); }
+      function base() { return '{{ request.url_for("index") }}'.replace(/\/$/, ''); }
+      function getCSRF() { return document.querySelector('meta[name="csrf-token"]')?.content; }
+      function getAdminToken() { return window.localStorage.getItem('adminToken') || ''; }
+      function authHeaders(includeJSON=true) {
+        const h = {};
+        const csrf = getCSRF(); if (csrf) h['X-CSRF-Token'] = csrf;
+        const adm = getAdminToken(); if (adm) h['X-Admin-Token'] = adm;
+        if (includeJSON) h['Content-Type'] = 'application/json';
+        return h;
+      }
+
+      function statusMsg(el, msg, isError) {
+        el.textContent = msg;
+        el.style.color = isError ? '#fca5a5' : '#6ee7b7';
+        setTimeout(() => { el.textContent = ''; }, 5000);
+      }
+
+      async function loadTemplates() {
+        const j = await fetchJSON(base() + '/api/recurring');
+        const items = j.items || [];
+
+        document.getElementById('total-count').textContent = items.length;
+        const autoOn = items.filter(t => t.auto_create).length;
+        const today = new Date();
+        const monthEnd = new Date(today.getFullYear(), today.getMonth() + 1, 0);
+        const dueSoon = items.filter(t => {
+          if (!t.next_due_date) return false;
+          const d = new Date(t.next_due_date);
+          return d >= today && d <= monthEnd;
+        }).length;
+        let monthlyTotal = 0;
+        items.forEach(t => {
+          if (t.type === 'income') return;
+          monthlyTotal += Math.abs(t.amount_cents);
+        });
+        document.getElementById('auto-count').textContent = autoOn;
+        document.getElementById('due-count').textContent = dueSoon;
+        document.getElementById('monthly-total').textContent = fmtCents(monthlyTotal);
+
+        const tbody = document.querySelector('#tbl tbody'); tbody.innerHTML = '';
+        for (const t of items) {
+          const tr = document.createElement('tr');
+          const dueDate = t.next_due_date || '—';
+          const isOverdue = t.next_due_date && new Date(t.next_due_date) < new Date(new Date().toDateString());
+          const dueDisplay = isOverdue
+            ? `<span style="color:#fca5a5;font-weight:600">${dueDate} ⚠️</span>`
+            : dueDate;
+          tr.innerHTML = `
+            <td>${t.id}</td>
+            <td><strong>${(t.name||'').replace(/</g,'&lt;')}</strong></td>
+            <td style="text-align:right">${fmtCents(t.amount_cents||0)}</td>
+            <td>${t.due_rule||''}</td>
+            <td>${dueDisplay}</td>
+            <td>${t.account_name || t.account_id || '—'}</td>
+            <td><span class="badge badge-${t.type}">${t.type}</span></td>
+            <td><span class="tag ${t.auto_create ? 'tag-auto' : 'tag-manual'}">${t.auto_create ? 'Auto' : 'Manual'}</span></td>
+            <td><span class="tag ${t.is_active ? 'tag-active' : 'tag-inactive'}">${t.is_active ? 'Yes' : 'No'}</span></td>
+            <td>
+              <button class="btn-sm btn-green" onclick="editTemplate(${t.id})">Edit</button>
+              <button class="btn-sm btn-red" onclick="deleteTemplate(${t.id})">Del</button>
+              ${t.is_active ? `<button class="btn-sm btn-amber" onclick="toggleActive(${t.id}, false)">Pause</button>`
+                          : `<button class="btn-sm btn-green" onclick="toggleActive(${t.id}, true)">React</button>`}
+            </td>
+          `;
+          tbody.appendChild(tr);
+        }
+      }
+
+      async function loadAccounts() {
+        try {
+          const j = await fetchJSON(base() + '/api/accounts');
+          const sel = document.getElementById('t-acct');
+          sel.innerHTML = '<option value="">— Select —</option>';
+          (j.accounts||[]).forEach(a => {
+            const o = document.createElement('option');
+            o.value = String(a.id);
+            o.textContent = a.name;
+            sel.appendChild(o);
+          });
+        } catch (e) { /* ignore */ }
+      }
+
+      async function loadInstances() {
+        try {
+          const j = await fetchJSON(base() + '/api/recurring/instances?limit=50');
+          const tbody = document.querySelector('#inst-tbl tbody');
+          if (j.items.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="5" class="muted">No auto-create history yet.</td></tr>';
+            return;
+          }
+          tbody.innerHTML = '';
+          for (const inst of j.items) {
+            const tr = document.createElement('tr');
+            tr.innerHTML = `
+              <td>${inst.id}</td>
+              <td>${(inst.template_name||'#'+inst.template_id).replace(/</g,'&lt;')}</td>
+              <td>${inst.due_date||'—'}</td>
+              <td>${renderStatus(inst.status)}</td>
+              <td style="font-size:11px;font-family:monospace;word-break:break-all">${inst.idempotency_key || '—'}</td>
+            `;
+            tbody.appendChild(tr);
+          }
+        } catch (e) {
+          document.querySelector('#inst-tbl tbody').innerHTML = '<tr><td colspan="5" class="muted">Failed to load history</td></tr>';
+        }
+      }
+
+      function renderStatus(s) {
+        const map = {
+          'pending': '<span style="color:#fcd34d">⏳ Pending</span>',
+          'created': '<span style="color:#6ee7b7">✅ Created</span>',
+          'skipped': '<span style="color:#9ca3af">⏭️ Skipped</span>',
+          'error': '<span style="color:#fca5a5">❌ Error</span>',
+        };
+        return map[s] || s;
+      }
+
+      async function addTemplate() {
+        const name = document.getElementById('t-name').value.trim();
+        const amount = parseFloat(document.getElementById('t-amount').value);
+        const rule = document.getElementById('t-rule').value;
+        const nextd = document.getElementById('t-next').value || null;
+        const acct = document.getElementById('t-acct').value;
+        const ttype = document.getElementById('t-type').value;
+        const auto = document.getElementById('t-auto').checked;
+
+        if (!name || !acct) {
+          statusMsg(document.getElementById('add-status'), 'Name and account required', true);
+          return;
+        }
+        if (!isFinite(amount) || amount <= 0) {
+          statusMsg(document.getElementById('add-status'), 'Enter a valid amount', true);
+          return;
+        }
+
+        const body = { name, amount_eur: amount, due_rule: rule, next_due_date: nextd, account_id: parseInt(acct,10), type: ttype, auto_create: auto };
+        try {
+          await fetchJSON(base() + '/api/recurring', { method:'POST', headers: authHeaders(true), body: JSON.stringify(body) });
+          statusMsg(document.getElementById('add-status'), 'Template created!');
+          document.getElementById('t-name').value = '';
+          document.getElementById('t-amount').value = '';
+          document.getElementById('t-next').value = '';
+          await loadTemplates();
+        } catch (e) {
+          statusMsg(document.getElementById('add-status'), 'Failed: ' + e.message, true);
+        }
+      }
+
+      async function editTemplate(id) {
+        const resp = await fetchJSON(base() + '/api/recurring');
+        const t = (resp.items||[]).find(x => x.id === id);
+        if (!t) return;
+        const name = prompt('Name', t.name||''); if (name === null) return;
+        const amtStr = prompt('Amount (EUR)', (Math.abs(t.amount_cents||0)/100).toFixed(2)); if (amtStr === null) return;
+        const rule = prompt('Rule (MONTHLY/WEEKLY/BIWEEKLY/ANNUAL/ONE_OFF)', t.due_rule||'MONTHLY'); if (rule === null) return;
+        const nextd = prompt('Next Due (YYYY-MM-DD or blank)', t.next_due_date||''); if (nextd === null) return;
+        const body = { name: name.trim(), amount_eur: parseFloat(amtStr), due_rule: rule.toUpperCase() };
+        if (nextd.trim() === '') body.next_due_date = null; else body.next_due_date = nextd.trim();
+        try {
+          await fetchJSON(base() + '/api/recurring/' + id, { method:'PUT', headers: authHeaders(true), body: JSON.stringify(body) });
+          await loadTemplates();
+        } catch (e) { alert('Update failed: ' + e.message); }
+      }
+
+      async function deleteTemplate(id) {
+        if (!confirm('Delete template #' + id + '?')) return;
+        try {
+          await fetchJSON(base() + '/api/recurring/' + id, { method:'DELETE', headers: authHeaders(false) });
+          await loadTemplates();
+        } catch (e) { alert('Delete failed'); }
+      }
+
+      async function toggleActive(id, active) {
+        try {
+          await fetchJSON(base() + '/api/recurring/' + id, { method:'PUT', headers: authHeaders(true), body: JSON.stringify({ is_active: active }) });
+          await loadTemplates();
+        } catch (e) { alert('Toggle failed'); }
+      }
+
+      async function syncFromCommitments() {
+        const statusEl = document.getElementById('action-status');
+        statusEl.textContent = 'Syncing...';
+        try {
+          const j = await fetchJSON(base() + '/api/recurring/sync-from-commitments', { method:'POST', headers: authHeaders(true), body: '{}' });
+          statusMsg(statusEl, `Synced: ${j.created} created, ${j.skipped} skipped`);
+          await loadTemplates();
+        } catch (e) { statusMsg(statusEl, 'Sync failed: ' + e.message, true); }
+      }
+
+      async function runAutoCreate() {
+        const statusEl = document.getElementById('action-status');
+        const dryRun = document.getElementById('dry-run-check').checked;
+        statusEl.textContent = dryRun ? 'Dry running...' : 'Creating transactions...';
+        try {
+          const j = await fetchJSON(base() + '/api/recurring/auto-create', { method:'POST', headers: authHeaders(true), body: JSON.stringify({ dry_run: dryRun }) });
+          const msg = dryRun
+            ? `Dry run: ${j.created} would be created, ${j.skipped} already processed`
+            : `Created ${j.created} transactions, ${j.skipped} skipped, ${j.errors} errors`;
+          statusMsg(statusEl, msg);
+          if (!dryRun) {
+            await loadTemplates();
+            await loadInstances();
+          }
+        } catch (e) { statusMsg(statusEl, 'Auto-create failed: ' + e.message, true); }
+      }
+
+      (async () => {
+        document.getElementById('admin-token-input').value = getAdminToken();
+        document.getElementById('btn-save-token').addEventListener('click', () => {
+          const v = document.getElementById('admin-token-input').value.trim();
+          if (v) { window.localStorage.setItem('adminToken', v); document.getElementById('token-status').textContent = 'Saved'; }
+          else { window.localStorage.removeItem('adminToken'); document.getElementById('token-status').textContent = 'Cleared'; }
+        });
+        document.getElementById('btn-add').addEventListener('click', addTemplate);
+        document.getElementById('btn-sync-commitments').addEventListener('click', syncFromCommitments);
+        document.getElementById('btn-auto-create').addEventListener('click', runAutoCreate);
+        document.getElementById('btn-refresh').addEventListener('click', async () => { await loadTemplates(); await loadInstances(); });
+
+        await loadAccounts();
+        await loadTemplates();
+        await loadInstances();
+      })();
+    </script>
+  </body>
+</html>

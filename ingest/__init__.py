@@ -1,2 +1,3 @@
-__all__ = ["ynab_backfill"]
+from ingest import parsers  # noqa: F401 — registers parser plugin discovery
 
+__all__ = ["ynab_backfill", "parsers"]

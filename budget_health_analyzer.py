@@ -2,26 +2,32 @@
 """
 Budget Health Analyzer
 
-A standalone script that analyzes YNAB budget data and generates an HTML health report.
-This can be integrated into FastAPI routes or run independently.
+A standalone script that analyzes local budget data from SQLite and generates
+an HTML health report.  This can be integrated into FastAPI routes or run
+independently.  Reads from localdb/budget.db instead of the YNAB API.
 """
 
-from datetime import datetime, timedelta
-from collections import defaultdict
-from typing import Dict, List, Any, Tuple, Optional
-from dataclasses import dataclass
+from __future__ import annotations
+
+import json
 import logging
+import sqlite3
+from collections import defaultdict
+from dataclasses import dataclass
+from datetime import datetime, timedelta
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
 
-from ynab_sdk_client import YNABSdkClient
-
-# Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+DEFAULT_DB_PATH = Path("localdb/budget.db")
 
 
 @dataclass
 class BudgetHealthMetrics:
     """Container for budget health analysis results"""
+
     total_budgeted: float
     total_spent: float
     total_remaining: float
@@ -32,538 +38,680 @@ class BudgetHealthMetrics:
     category_analysis: List[Dict[str, Any]]
     top_spending_categories: List[Dict[str, Any]]
     spending_by_payee: List[Dict[str, Any]]
-    recurring_transactions: List[Dict[str, Any]]  # detected recurring payments
-    calendar_heat_map: Dict[str, Any]  # calendar data with transaction frequency
-    health_score: float  # 0-100 overall health score
+    recurring_transactions: List[Dict[str, Any]]
+    calendar_heat_map: Dict[str, Any]
+    health_score: float  # 0-100
 
 
 class BudgetHealthAnalyzer:
-    def __init__(self, budget_id: Optional[str] = None):
+    """Analyzes budget health from a local SQLite database.
+
+    Parameters
+    ----------
+    db_path : str or Path, optional
+        Path to the budget SQLite database.  Defaults to ``localdb/budget.db``.
+    """
+
+    def __init__(self, db_path: str | Path = DEFAULT_DB_PATH) -> None:
+        self.db_path = Path(db_path)
+        self._conn: sqlite3.Connection | None = None
+        self._account_cache: list[dict] | None = None
+        self._category_cache: list[dict] | None = None
+        self._transaction_cache: list[dict] | None = None
+
+    # ------------------------------------------------------------------
+    # Connection helpers
+    # ------------------------------------------------------------------
+
+    def _connect(self) -> sqlite3.Connection:
+        if self._conn is None:
+            self._conn = sqlite3.connect(self.db_path)
+            self._conn.row_factory = sqlite3.Row
+        return self._conn
+
+    def _close(self) -> None:
+        if self._conn is not None:
+            self._conn.close()
+            self._conn = None
+
+    # ------------------------------------------------------------------
+    # Data-loading helpers (replaces YNAB SDK calls)
+    # ------------------------------------------------------------------
+
+    def _cents_to_euros(self, cents: int | None) -> float:
+        """Convert integer cents to euro float."""
+        if cents is None:
+            return 0.0
+        return cents / 100.0
+
+    def _load_accounts(self) -> list[dict]:
+        if self._account_cache is not None:
+            return self._account_cache
+        conn = self._connect()
+        rows = conn.execute(
+            "SELECT id, name, type, currency, is_active FROM accounts ORDER BY name"
+        ).fetchall()
+        self._account_cache = [dict(r) for r in rows]
+        return self._account_cache
+
+    def _load_categories(self) -> list[dict]:
+        if self._category_cache is not None:
+            return self._category_cache
+        conn = self._connect()
+        rows = conn.execute(
+            "SELECT id, name, parent_id, is_archived FROM categories ORDER BY name"
+        ).fetchall()
+        self._category_cache = [dict(r) for r in rows]
+        return self._category_cache
+
+    def _load_transactions(self) -> list[dict]:
+        if self._transaction_cache is not None:
+            return self._transaction_cache
+        conn = self._connect()
+        rows = conn.execute(
+            "SELECT idempotency_key, account_id, posted_at, amount_cents, "
+            "payee, memo, category_id, is_cleared "
+            "FROM transactions ORDER BY posted_at"
+        ).fetchall()
+        self._transaction_cache = [dict(r) for r in rows]
+        return self._transaction_cache
+
+    def _category_name(self, category_id: int | None) -> str:
+        if category_id is None:
+            return "Uncategorized"
+        for c in self._load_categories():
+            if c["id"] == category_id:
+                return c["name"]
+        return "Unknown"
+
+    def _account_name(self, account_id: int | None) -> str:
+        if account_id is None:
+            return "Unknown"
+        for a in self._load_accounts():
+            if a["id"] == account_id:
+                return a["name"]
+        return "Unknown"
+
+    # ------------------------------------------------------------------
+    # Analysis – budget totals
+    # ------------------------------------------------------------------
+
+    def _calculate_budget_totals(self) -> Tuple[float, float, float]:
+        """Return (total_budgeted, total_spent, total_remaining).
+
+        Since the local DB doesn't store budget targets, we use net
+        inflow/outflow from transactions as a proxy for the current period.
+        The 'budgeted' value is derived from income transactions and
+        'spent' from expense transactions within the current month.
         """
-        Initialize the budget health analyzer
+        now = datetime.now()
+        month_start = now.replace(day=1).date().isoformat()
 
-        Args:
-            budget_id: YNAB budget ID. If None, will use the first available budget
+        total_income = 0.0
+        total_expense = 0.0
+
+        for tx in self._load_transactions():
+            posted = tx.get("posted_at", "")
+            if posted and posted[:10] < month_start:
+                continue  # only current month
+            cents = tx.get("amount_cents", 0) or 0
+            if cents > 0:
+                total_income += self._cents_to_euros(cents)
+            else:
+                total_expense += abs(self._cents_to_euros(cents))
+
+        total_budgeted = total_income
+        total_spent = total_expense
+        total_remaining = total_income - total_expense
+        return total_budgeted, total_spent, total_remaining
+
+    # ------------------------------------------------------------------
+    # Analysis – overspent & underfunded
+    # ------------------------------------------------------------------
+
+    def _find_overspent_categories(self) -> List[Dict[str, Any]]:
+        """Find categories where spending exceeds a simple estimate.
+
+        Without explicit budget targets, we compare each category's
+        spending against its proportional share of income.
         """
-        self.client = YNABSdkClient()
-        self.budget_id = budget_id
-        self._budget_data = None
-        self._transaction_data = None
+        txns = self._load_transactions()
+        now = datetime.now()
+        month_start = now.replace(day=1).date().isoformat()
 
-    def _get_budget_id(self) -> str:
-        """Get budget ID, using first available if not specified"""
-        if self.budget_id:
-            return self.budget_id
+        cat_spend: dict[int, float] = defaultdict(float)
+        for tx in txns:
+            posted = tx.get("posted_at", "")
+            if posted[:10] < month_start:
+                continue
+            cents = tx.get("amount_cents", 0) or 0
+            if cents < 0:
+                cat_spend[tx["category_id"]] += self._cents_to_euros(abs(cents))
 
-        # This would need to be implemented in the client if not available
-        # For now, assume we have the budget ID
-        raise ValueError("Budget ID must be provided")
+        overspent: list[dict] = []
+        for cat_id, spent in sorted(cat_spend.items(), key=lambda x: -x[1]):
+            name = self._category_name(cat_id)
+            # Simple heuristic: if a single category accounts for >30% of
+            # total spending, flag it.
+            total_spent = sum(v for v in cat_spend.values())
+            if total_spent > 0 and spent / total_spent > 0.30 and spent > 100:
+                overspent.append(
+                    {
+                        "name": name,
+                        "budgeted": 0.0,
+                        "spent": spent,
+                        "overspent_amount": spent,
+                        "overspent_display": f"€{spent:,.2f}",
+                    }
+                )
+        return overspent
 
-    def _load_data(self) -> None:
-        """Load budget and transaction data from YNAB"""
-        budget_id = self._get_budget_id()
+    def _find_underfunded_goals(self) -> List[Dict[str, Any]]:
+        """Placeholder – no explicit goal data in local DB yet.
 
-        logger.info("Loading budget data...")
-        self._budget_data = self.client.get_budget_details(budget_id)
+        Returns an empty list until goal tracking is added to the schema.
+        """
+        return []
 
-        logger.info("Loading transaction data...")
-        # Prefer loading transactions from the budget's first available month for fuller cashflow
-        since_date = None
-        try:
-            since_date = self._budget_data.get('first_month')  # e.g., '2024-08-01'
-        except Exception:
-            since_date = None
+    # ------------------------------------------------------------------
+    # Analysis – spending trends
+    # ------------------------------------------------------------------
 
-        # Fallback: last 90 days if first_month is missing
-        if not since_date:
-            since_date = (datetime.now() - timedelta(days=90)).date().isoformat()
+    def _analyze_spending_trends(self) -> Dict[str, float]:
+        now = datetime.now().date()
+        trends: Dict[str, float] = {
+            "last_7_days": 0.0,
+            "last_14_days": 0.0,
+            "last_30_days": 0.0,
+        }
+        for tx in self._load_transactions():
+            amt = tx.get("amount_cents", 0) or 0
+            if amt >= 0:  # income, skip
+                continue
+            posted = tx.get("posted_at", "")
+            try:
+                tx_date = datetime.fromisoformat(posted).date()
+            except (ValueError, TypeError):
+                continue
+            days_ago = (now - tx_date).days
+            amount = self._cents_to_euros(abs(amt))
+            if days_ago <= 7:
+                trends["last_7_days"] += amount
+            if days_ago <= 14:
+                trends["last_14_days"] += amount
+            if days_ago <= 30:
+                trends["last_30_days"] += amount
+        return trends
 
-        self._transaction_data = self.client.get_transactions(budget_id, since_date)
+    # ------------------------------------------------------------------
+    # Analysis – account summary
+    # ------------------------------------------------------------------
 
-        logger.info(f"Loaded {len(self._transaction_data or [])} transactions")
+    def _summarize_accounts(self) -> List[Dict[str, Any]]:
+        conn = self._connect()
+        rows = conn.execute(
+            "SELECT a.id, a.name, a.type, "
+            "COALESCE(SUM(t.amount_cents), 0) AS balance_cents "
+            "FROM accounts a "
+            "LEFT JOIN transactions t ON t.account_id = a.id "
+            "WHERE a.is_active = 1 "
+            "GROUP BY a.id ORDER BY a.name"
+        ).fetchall()
+        result = []
+        for r in rows:
+            bal = self._cents_to_euros(r["balance_cents"])
+            result.append(
+                {
+                    "name": r["name"],
+                    "type": r["type"],
+                    "balance": bal,
+                    "balance_display": f"€{bal:,.2f}",
+                    "cleared_balance": bal,
+                    "cleared_balance_display": f"€{bal:,.2f}",
+                }
+            )
+        return result
 
-    def analyze(self) -> BudgetHealthMetrics:
-        """Perform comprehensive budget health analysis"""
-        if not self._budget_data or not self._transaction_data:
-            self._load_data()
+    # ------------------------------------------------------------------
+    # Analysis – category analysis
+    # ------------------------------------------------------------------
 
-        logger.info("Analyzing budget health...")
+    def _analyze_categories(self) -> List[Dict[str, Any]]:
+        txns = self._load_transactions()
+        cat_spend: dict[int, float] = defaultdict(float)
+        for tx in txns:
+            cents = tx.get("amount_cents", 0) or 0
+            if cents < 0:
+                cat_spend[tx["category_id"]] += self._cents_to_euros(abs(cents))
 
-        # Calculate core metrics
-        total_budgeted, total_spent, total_remaining = self._calculate_budget_totals()
-        overspent_categories = self._find_overspent_categories()
-        underfunded_goals = self._find_underfunded_goals()
-        recent_trends = self._analyze_spending_trends()
-        account_summary = self._summarize_accounts()
-        category_analysis = self._analyze_categories()
-        top_spending = self._get_top_spending_categories()
-        spending_by_payee = self._analyze_spending_by_payee()
-        recurring_transactions = self._detect_recurring_transactions()
-        calendar_heat_map = self._generate_calendar_heat_map()
-        health_score = self._calculate_health_score(
-            total_budgeted, total_spent, overspent_categories, underfunded_goals
+        result = []
+        for cat_id, spent in sorted(cat_spend.items(), key=lambda x: -x[1]):
+            name = self._category_name(cat_id)
+            result.append(
+                {
+                    "name": name,
+                    "budgeted": 0.0,
+                    "budgeted_display": "€0.00",
+                    "activity": -spent,
+                    "activity_display": f"-€{spent:,.2f}",
+                    "balance": -spent,
+                    "balance_display": f"-€{spent:,.2f}",
+                    "utilization": 100.0 if spent > 0 else 0.0,
+                }
+            )
+        return result
+
+    # ------------------------------------------------------------------
+    # Analysis – top spending categories & payees
+    # ------------------------------------------------------------------
+
+    def _get_top_spending_categories(self) -> List[Dict[str, Any]]:
+        txns = self._load_transactions()
+        cat_spend: dict[int, float] = defaultdict(float)
+        for tx in txns:
+            cents = tx.get("amount_cents", 0) or 0
+            if cents < 0:
+                cat_spend[tx["category_id"]] += self._cents_to_euros(abs(cents))
+
+        result = []
+        for cat_id, amount in sorted(cat_spend.items(), key=lambda x: -x[1])[:10]:
+            result.append(
+                {
+                    "name": self._category_name(cat_id),
+                    "amount": amount,
+                    "amount_display": f"€{amount:,.2f}",
+                }
+            )
+        return result
+
+    def _analyze_spending_by_payee(self) -> List[Dict[str, Any]]:
+        txns = self._load_transactions()
+        payee_spend: dict[str, float] = defaultdict(float)
+        for tx in txns:
+            cents = tx.get("amount_cents", 0) or 0
+            if cents < 0:
+                payee = tx.get("payee") or "Unknown"
+                payee_spend[payee] += self._cents_to_euros(abs(cents))
+
+        result = []
+        for payee, amount in sorted(payee_spend.items(), key=lambda x: -x[1])[:10]:
+            result.append(
+                {
+                    "name": payee,
+                    "amount": amount,
+                    "amount_display": f"€{amount:,.2f}",
+                }
+            )
+        return result
+
+    # ------------------------------------------------------------------
+    # Analysis – health score
+    # ------------------------------------------------------------------
+
+    def _calculate_health_score(
+        self,
+        budgeted: float,
+        spent: float,
+        overspent_categories: list,
+        underfunded_goals: list,
+    ) -> float:
+        score = 100.0
+        if budgeted > 0:
+            overspend_ratio = spent / budgeted
+            if overspend_ratio > 1:
+                score -= (overspend_ratio - 1) * 50
+        score -= min(30, len(overspent_categories) * 5)
+        score -= min(20, len(underfunded_goals) * 3)
+        return max(0.0, score)
+
+    # ------------------------------------------------------------------
+    # Analysis – recurring transactions
+    # ------------------------------------------------------------------
+
+    def _detect_recurring_transactions(self) -> List[Dict[str, Any]]:
+        """Detect recurring transactions from local transaction data."""
+        txns = self._load_transactions()
+        recurring: list[dict] = []
+
+        payee_patterns: dict[str, dict[float, list[dict]]] = defaultdict(
+            lambda: defaultdict(list)
         )
 
-        return BudgetHealthMetrics(
-            total_budgeted=total_budgeted,
-            total_spent=total_spent,
-            total_remaining=total_remaining,
-            overspent_categories=overspent_categories,
-            underfunded_goals=underfunded_goals,
-            recent_spending_trend=recent_trends,
-            account_summary=account_summary,
-            category_analysis=category_analysis,
-            top_spending_categories=top_spending,
-            spending_by_payee=spending_by_payee,
-            recurring_transactions=recurring_transactions,
-            calendar_heat_map=calendar_heat_map,
-            health_score=health_score
+        for tx in txns:
+            cents = tx.get("amount_cents", 0) or 0
+            if cents >= 0:
+                continue
+            payee = tx.get("payee") or "Unknown"
+            amount = abs(self._cents_to_euros(cents))
+            rounded = round(amount, 0)
+            date_str = tx.get("posted_at", "")
+            if date_str and payee != "Unknown":
+                try:
+                    tx_date = datetime.fromisoformat(date_str).date()
+                except (ValueError, TypeError):
+                    continue
+                payee_patterns[payee][rounded].append(
+                    {"date": tx_date, "amount": amount, "day_of_month": tx_date.day}
+                )
+
+        for payee_name, amount_groups in payee_patterns.items():
+            for base_amount, transactions in amount_groups.items():
+                if len(transactions) < 3:
+                    continue
+                dates = sorted(tx["date"] for tx in transactions)
+                intervals = [
+                    (dates[i + 1] - dates[i]).days for i in range(len(dates) - 1)
+                ]
+                avg_interval = sum(intervals) / len(intervals) if intervals else 0
+
+                is_monthly = 25 <= avg_interval <= 35
+                is_weekly = 6 <= avg_interval <= 8
+                is_quarterly = 85 <= avg_interval <= 95
+
+                if not (is_monthly or is_weekly or is_quarterly):
+                    continue
+
+                days_of_month = [tx["day_of_month"] for tx in transactions]
+                most_common_day = max(set(days_of_month), key=days_of_month.count)
+
+                if is_monthly:
+                    freq_type = "Monthly"
+                elif is_weekly:
+                    freq_type = "Weekly"
+                else:
+                    freq_type = "Quarterly"
+
+                recurring.append(
+                    {
+                        "payee_name": payee_name,
+                        "amount": base_amount,
+                        "amount_display": f"€{base_amount:,.2f}",
+                        "frequency_count": len(transactions),
+                        "avg_interval_days": round(avg_interval, 1),
+                        "most_common_day": most_common_day,
+                        "frequency_type": freq_type,
+                        "last_transaction_date": max(dates).isoformat(),
+                        "transactions": transactions[-3:],
+                    }
+                )
+
+        return sorted(recurring, key=lambda x: x.get("amount", 0) or 0, reverse=True)
+
+    # ------------------------------------------------------------------
+    # Analysis – calendar heat map
+    # ------------------------------------------------------------------
+
+    def _generate_calendar_heat_map(self) -> Dict[str, Any]:
+        txns = self._load_transactions()
+        day_counts: dict[int, int] = defaultdict(int)
+        day_amounts: dict[int, float] = defaultdict(float)
+
+        for tx in txns:
+            cents = tx.get("amount_cents", 0) or 0
+            if cents >= 0:
+                continue
+            date_str = tx.get("posted_at", "")
+            if not date_str:
+                continue
+            try:
+                tx_date = datetime.fromisoformat(date_str).date()
+            except (ValueError, TypeError):
+                continue
+            day = tx_date.day
+            day_counts[day] += 1
+            day_amounts[day] += self._cents_to_euros(abs(cents))
+
+        max_freq = max(day_counts.values()) if day_counts else 0
+        heat_days: dict[str, dict] = {}
+        for d in range(1, 32):
+            freq = day_counts.get(d, 0)
+            total_amt = day_amounts.get(d, 0.0)
+            intensity = freq / max_freq if max_freq > 0 else 0
+            heat_days[str(d)] = {
+                "day": d,
+                "frequency": freq,
+                "total_amount": total_amt,
+                "total_amount_display": f"€{total_amt:,.2f}",
+                "intensity": intensity,
+                "color_opacity": min(0.1 + (intensity * 0.8), 0.9),
+            }
+
+        return {
+            "days": heat_days,
+            "max_frequency": max_freq,
+            "total_transaction_days": len(day_counts),
+        }
+
+    # ------------------------------------------------------------------
+    # Subscription detection (uses local data only)
+    # ------------------------------------------------------------------
+
+    def detect_subscriptions_and_scheduled_payments(self) -> List[Dict[str, Any]]:
+        """Detect potential subscriptions from transaction patterns."""
+        txns = self._load_transactions()
+        subscriptions: list[dict] = []
+
+        payee_groups: dict[str, list[dict]] = defaultdict(list)
+        for tx in txns:
+            cents = tx.get("amount_cents", 0) or 0
+            if cents >= 0:
+                continue
+            payee = tx.get("payee") or "Unknown"
+            if payee == "Unknown":
+                continue
+            amount = self._cents_to_euros(abs(cents))
+            date_str = tx.get("posted_at", "")
+            if date_str:
+                try:
+                    parts = date_str.split("T")[0].split("-")
+                    month_year = f"{parts[0]}-{parts[1]}"
+                    payee_groups[payee].append(
+                        {
+                            "date": date_str,
+                            "amount": amount,
+                            "month_year": month_year,
+                            "year": int(parts[0]),
+                            "month": int(parts[1]),
+                            "day": int(parts[2]),
+                        }
+                    )
+                except (IndexError, ValueError):
+                    continue
+
+        for payee_name, transactions in payee_groups.items():
+            if len(transactions) < 2:
+                continue
+            transactions.sort(key=lambda x: x["date"])
+
+            amount_groups: dict[float, list[dict]] = defaultdict(list)
+            for tx in transactions:
+                amt = tx["amount"]
+                found = False
+                for existing in list(amount_groups.keys()):
+                    if abs(amt - existing) <= 3.0:
+                        amount_groups[existing].append(tx)
+                        found = True
+                        break
+                if not found:
+                    amount_groups[amt].append(tx)
+
+            for base_amount, similar in amount_groups.items():
+                if len(similar) < 2:
+                    continue
+                unique_months = set(tx["month_year"] for tx in similar)
+                if len(unique_months) < 2:
+                    continue
+
+                amounts = [tx["amount"] for tx in similar]
+                avg_amt = sum(amounts) / len(amounts)
+                min_amt = min(amounts)
+                max_amt = max(amounts)
+                dates = sorted(tx["date"] for tx in similar)
+
+                intervals: list[int] = []
+                for i in range(len(dates) - 1):
+                    try:
+                        d1 = datetime.fromisoformat(dates[i]).date()
+                        d2 = datetime.fromisoformat(dates[i + 1]).date()
+                        intervals.append((d2 - d1).days)
+                    except (ValueError, TypeError):
+                        continue
+                avg_interval = sum(intervals) / len(intervals) if intervals else 0
+
+                confidence = 50 + min(30, len(similar) * 5)
+                if max_amt > 0 and (max_amt - min_amt) / max_amt <= 0.05:
+                    confidence += 15
+                elif max_amt > 0 and (max_amt - min_amt) / max_amt <= 0.10:
+                    confidence += 10
+                if 25 <= avg_interval <= 35:
+                    confidence += 10
+                    sub_type = "Monthly Subscription"
+                elif 6 <= avg_interval <= 10:
+                    confidence += 8
+                    sub_type = "Weekly Service"
+                elif 85 <= avg_interval <= 95:
+                    sub_type = "Quarterly Payment"
+                else:
+                    sub_type = "Scheduled Payment"
+                confidence = min(100, max(0, confidence))
+
+                subscriptions.append(
+                    {
+                        "payee_name": payee_name,
+                        "avg_amount": avg_amt,
+                        "avg_amount_display": f"€{avg_amt:,.2f}",
+                        "min_amount": min_amt,
+                        "max_amount": max_amt,
+                        "amount_range_display": (
+                            f"€{min_amt:,.2f} – €{max_amt:,.2f}"
+                            if min_amt != max_amt
+                            else f"€{avg_amt:,.2f}"
+                        ),
+                        "occurrence_count": len(similar),
+                        "month_span": len(unique_months),
+                        "months_covered": sorted(unique_months),
+                        "avg_interval_days": round(avg_interval, 1),
+                        "subscription_type": sub_type,
+                        "confidence_score": confidence,
+                        "first_seen": min(dates),
+                        "last_seen": max(dates),
+                        "sample_transactions": similar[-3:],
+                    }
+                )
+
+        return sorted(
+            subscriptions,
+            key=lambda x: (x.get("confidence_score", 0) or 0, x.get("avg_amount", 0) or 0),
+            reverse=True,
         )
+
+    # ------------------------------------------------------------------
+    # Cashflow helper
+    # ------------------------------------------------------------------
 
     def _calculate_cashflow_totals(self) -> Dict[str, float]:
-        """
-        Calculate inflows, outflows, and net from transactions.
-        Returns a dict with keys: inflows_all, outflows_all, net_all,
-        inflows_mtd, outflows_mtd, net_mtd
-        """
         inflows_all = 0.0
         outflows_all = 0.0
         inflows_mtd = 0.0
         outflows_mtd = 0.0
 
-        if not self._transaction_data:
-            return {
-                'inflows_all': 0.0,
-                'outflows_all': 0.0,
-                'net_all': 0.0,
-                'inflows_mtd': 0.0,
-                'outflows_mtd': 0.0,
-                'net_mtd': 0.0,
-            }
-
         now = datetime.now()
-        month_start = now.replace(day=1).date()
+        month_start = now.replace(day=1).date().isoformat()
 
-        for tx in self._transaction_data:
-            amt = tx.get('amount', 0) or 0.0
-            # Parse date safely
-            try:
-                tx_date = datetime.fromisoformat(tx.get('date', '')).date()
-            except Exception:
-                tx_date = None
+        for tx in self._load_transactions():
+            cents = tx.get("amount_cents", 0) or 0
+            amt = self._cents_to_euros(cents)
+            posted = tx.get("posted_at", "")[:10]
 
             if amt > 0:
                 inflows_all += amt
-                if tx_date and tx_date >= month_start:
+                if posted >= month_start:
                     inflows_mtd += amt
             elif amt < 0:
                 outflows_all += abs(amt)
-                if tx_date and tx_date >= month_start:
+                if posted >= month_start:
                     outflows_mtd += abs(amt)
 
         return {
-            'inflows_all': inflows_all,
-            'outflows_all': outflows_all,
-            'net_all': inflows_all - outflows_all,
-            'inflows_mtd': inflows_mtd,
-            'outflows_mtd': outflows_mtd,
-            'net_mtd': inflows_mtd - outflows_mtd,
+            "inflows_all": inflows_all,
+            "outflows_all": outflows_all,
+            "net_all": inflows_all - outflows_all,
+            "inflows_mtd": inflows_mtd,
+            "outflows_mtd": outflows_mtd,
+            "net_mtd": inflows_mtd - outflows_mtd,
         }
 
     def _render_cashflow_section(self) -> str:
-        """Render HTML snippet for the cashflow card"""
         cf = self._calculate_cashflow_totals()
-        return (
-            f"""
-            <div class=\"metric\">
+        return f"""
+            <div class="metric">
                 <span>All-time Inflows:</span>
-                <span class=\"metric-value\">€{cf['inflows_all']:,.2f}</span>
+                <span class="metric-value">€{cf['inflows_all']:,.2f}</span>
             </div>
-            <div class=\"metric\">
+            <div class="metric">
                 <span>All-time Outflows:</span>
-                <span class=\"metric-value negative\">€{cf['outflows_all']:,.2f}</span>
+                <span class="metric-value negative">€{cf['outflows_all']:,.2f}</span>
             </div>
-            <div class=\"metric\">
+            <div class="metric">
                 <span>All-time Net:</span>
-                <span class=\"metric-value {('positive' if cf['net_all'] >= 0 else 'negative')}\">€{cf['net_all']:,.2f}</span>
+                <span class="metric-value {'positive' if cf['net_all'] >= 0 else 'negative'}">€{cf['net_all']:,.2f}</span>
             </div>
-            <div class=\"metric\" style=\"margin-top:12px; color:#666\">
+            <div class="metric" style="margin-top:12px; color:#666">
                 <span>Month-to-date Inflows:</span>
-                <span class=\"metric-value\">€{cf['inflows_mtd']:,.2f}</span>
+                <span class="metric-value">€{cf['inflows_mtd']:,.2f}</span>
             </div>
-            <div class=\"metric\">
+            <div class="metric">
                 <span>Month-to-date Outflows:</span>
-                <span class=\"metric-value negative\">€{cf['outflows_mtd']:,.2f}</span>
+                <span class="metric-value negative">€{cf['outflows_mtd']:,.2f}</span>
             </div>
-            <div class=\"metric\">
+            <div class="metric">
                 <span>Month-to-date Net:</span>
-                <span class=\"metric-value {('positive' if cf['net_mtd'] >= 0 else 'negative')}\">€{cf['net_mtd']:,.2f}</span>
+                <span class="metric-value {'positive' if cf['net_mtd'] >= 0 else 'negative'}">€{cf['net_mtd']:,.2f}</span>
             </div>
-            """
-        )
-
-    def _calculate_budget_totals(self) -> Tuple[float, float, float]:
-        """Calculate total budgeted, spent, and remaining amounts.
-
-        Previously this method summed the category ``balance`` fields to
-        determine the remaining amount.  Category balances accumulate funds
-        across months, so using them dramatically inflated the remaining
-        value (e.g., by including long‑term savings).  The remaining amount
-        should instead reflect the current month's budget: what was budgeted
-        minus what was spent in the same period.
-
-        The corrected implementation sums the ``budgeted`` and ``activity``
-        values for the month and derives:
-        - ``total_spent`` as the absolute value of negative activity
-        - ``total_remaining`` as ``total_budgeted + total_activity``
-          (equivalently ``total_budgeted - total_spent``)
         """
 
-        total_budgeted = 0.0
-        total_activity = 0.0
-
-        if self._budget_data:
-            for category in self._budget_data.get("categories", []):
-                if not category.get("deleted", False) and not category.get("hidden", False):
-                    total_budgeted += category.get("budgeted", 0) or 0
-                    total_activity += category.get("activity", 0) or 0
-
-        total_spent = -total_activity if total_activity < 0 else 0.0
-        total_remaining = total_budgeted + total_activity
-
-        return total_budgeted, total_spent, total_remaining
-
-    def _find_overspent_categories(self) -> List[Dict[str, Any]]:
-        """Find categories that are overspent (negative balance)"""
-        overspent = []
-
-        if self._budget_data:
-            for category in self._budget_data.get('categories', []):
-                if (not category.get('deleted', False) and
-                    not category.get('hidden', False) and
-                    category.get('balance', 0) < 0):
-
-                    overspent.append({
-                        'name': category.get('name', 'Unknown'),
-                        'budgeted': category.get('budgeted', 0),
-                        'spent': abs(category.get('activity', 0)),
-                        'overspent_amount': abs(category.get('balance', 0)),
-                        'overspent_display': category.get('balance_display', '€0.00')
-                    })
-
-        return sorted(overspent, key=lambda x: x.get('overspent_amount', 0) or 0, reverse=True)
-
-    def _find_underfunded_goals(self) -> List[Dict[str, Any]]:
-        """Find categories with goals that are underfunded"""
-        underfunded = []
-
-        if self._budget_data:
-            for category in self._budget_data.get('categories', []):
-                goal_under_funded = category.get('goal_under_funded', 0) or 0
-                if (not category.get('deleted', False) and
-                    category.get('goal_type') and
-                    goal_under_funded > 0):
-
-                    underfunded.append({
-                        'name': category.get('name', 'Unknown'),
-                        'goal_target': category.get('goal_target', 0),
-                        'goal_target_display': category.get('goal_target_display', '€0.00'),
-                        'under_funded': goal_under_funded,
-                        'under_funded_display': category.get('goal_under_funded_display', '€0.00'),
-                        'percentage_complete': category.get('goal_percentage_complete', 0)
-                    })
-
-        return sorted(underfunded, key=lambda x: x.get('under_funded', 0) or 0, reverse=True)
-
-    def _analyze_spending_trends(self) -> Dict[str, float]:
-        """Analyze spending trends over different time periods"""
-        now = datetime.now().date()
-        trends: Dict[str, float] = {
-            'last_7_days': 0.0,
-            'last_14_days': 0.0,
-            'last_30_days': 0.0
-        }
-
-        if self._transaction_data:
-            for transaction in self._transaction_data:
-                if transaction.get('amount', 0) >= 0:  # Skip income transactions
-                    continue
-
-                tx_date = datetime.fromisoformat(transaction.get('date', '')).date()
-                amount = abs(transaction.get('amount', 0))
-
-                days_ago = (now - tx_date).days
-
-                if days_ago <= 7:
-                    trends['last_7_days'] += amount
-                if days_ago <= 14:
-                    trends['last_14_days'] += amount
-                if days_ago <= 30:
-                    trends['last_30_days'] += amount
-
-        return trends
-
-    def _summarize_accounts(self) -> List[Dict[str, Any]]:
-        """Summarize account balances and status"""
-        accounts = []
-
-        if self._budget_data:
-            for account in self._budget_data.get('accounts', []):
-                if not account.get('deleted', False) and account.get('on_budget', True):
-                    accounts.append({
-                        'name': account.get('name', 'Unknown'),
-                        'type': account.get('type', 'unknown'),
-                        'balance': account.get('balance', 0),
-                        'balance_display': account.get('balance_display', '€0.00'),
-                        'cleared_balance': account.get('cleared_balance', 0),
-                        'cleared_balance_display': account.get('cleared_balance_display', '€0.00')
-                    })
-
-        return sorted(accounts, key=lambda x: x.get('balance', 0) or 0, reverse=True)
-
-    def _analyze_categories(self) -> List[Dict[str, Any]]:
-        """Analyze category performance"""
-        categories = []
-
-        # Group categories by category group for better organization
-        category_groups = defaultdict(list)
-
-        if self._budget_data:
-            for category in self._budget_data.get('categories', []):
-                if not category.get('deleted', False) and not category.get('hidden', False):
-                    category_data = {
-                        'name': category.get('name', 'Unknown'),
-                        'budgeted': category.get('budgeted', 0),
-                        'budgeted_display': category.get('budgeted_display', '€0.00'),
-                        'activity': category.get('activity', 0),
-                        'activity_display': category.get('activity_display', '€0.00'),
-                        'balance': category.get('balance', 0),
-                        'balance_display': category.get('balance_display', '€0.00'),
-                        'utilization': self._calculate_utilization(
-                            category.get('budgeted', 0),
-                            category.get('activity', 0)
-                        )
-                    }
-
-                    categories.append(category_data)
-
-        return sorted(categories, key=lambda x: abs(x.get('activity', 0) or 0), reverse=True)
-
-    def _calculate_utilization(self, budgeted: float, activity: float) -> float:
-        """Calculate budget utilization percentage"""
-        if budgeted <= 0:
-            return 0 if activity >= 0 else 100
-        return min(100, (abs(activity) / budgeted) * 100)
-
-    def _get_top_spending_categories(self) -> List[Dict[str, Any]]:
-        """Get top spending categories from recent transactions"""
-        category_spending = defaultdict(float)
-        category_names = {}
-
-        # Build category name lookup
-        if self._budget_data:
-            for category in self._budget_data.get('categories', []):
-                category_names[category.get('id')] = category.get('name', 'Unknown')
-
-        # Aggregate spending by category
-        if self._transaction_data:
-            for transaction in self._transaction_data:
-                if transaction.get('amount', 0) < 0:  # Only spending transactions
-                    category_id = transaction.get('category_id')
-                    if category_id:
-                        amount = abs(transaction.get('amount', 0))
-                        category_spending[category_id] += amount
-
-        # Convert to list and sort
-        top_categories = []
-        for category_id, amount in category_spending.items():
-            top_categories.append({
-                'name': category_names.get(category_id, 'Unknown'),
-                'amount': amount,
-                'amount_display': f'€{amount:,.2f}'
-            })
-
-        return sorted(top_categories, key=lambda x: x.get('amount', 0) or 0, reverse=True)[:10]
-
-    def _analyze_spending_by_payee(self) -> List[Dict[str, Any]]:
-        """Analyze spending by payee"""
-        payee_spending = defaultdict(float)
-
-        if self._transaction_data:
-            for transaction in self._transaction_data:
-                if transaction.get('amount', 0) < 0:  # Only spending
-                    payee_name = transaction.get('payee_name', 'Unknown')
-                    amount = abs(transaction.get('amount', 0))
-                    payee_spending[payee_name] += amount
-
-        payees = []
-        for payee, amount in payee_spending.items():
-            payees.append({
-                'name': payee,
-                'amount': amount,
-                'amount_display': f'€{amount:,.2f}'
-            })
-
-        return sorted(payees, key=lambda x: x.get('amount', 0) or 0, reverse=True)[:10]
-
-    def _calculate_health_score(self, budgeted: float, spent: float,
-                              overspent_categories: List, underfunded_goals: List) -> float:
-        """Calculate overall budget health score (0-100)"""
-        score = 100
-
-        # Deduct for overspending
-        if budgeted > 0:
-            overspend_ratio = min(1.0, abs(spent) / budgeted)
-            if overspend_ratio > 1:
-                score -= (overspend_ratio - 1) * 50
-
-        # Deduct for overspent categories
-        score -= min(30, len(overspent_categories) * 5)
-
-        # Deduct for underfunded goals
-        score -= min(20, len(underfunded_goals) * 3)
-
-        return max(0, score)
-
-    def _detect_recurring_transactions(self) -> List[Dict[str, Any]]:
-        """Detect recurring transactions by analyzing patterns in payee and amount"""
-        recurring = []
-
-        if not self._transaction_data:
-            return recurring
-
-        # Group transactions by payee and amount (rounded to avoid minor variations)
-        payee_patterns = defaultdict(lambda: defaultdict(list))
-
-        for transaction in self._transaction_data:
-            if transaction.get('amount', 0) >= 0:  # Skip income
-                continue
-
-            payee_name = transaction.get('payee_name', 'Unknown')
-            amount = abs(transaction.get('amount', 0))
-            rounded_amount = round(amount, 0)  # Round to nearest euro for grouping
-            date_str = transaction.get('date', '')
-
-            if date_str and payee_name != 'Unknown':
-                try:
-                    tx_date = datetime.fromisoformat(date_str).date()
-                    payee_patterns[payee_name][rounded_amount].append({
-                        'date': tx_date,
-                        'amount': amount,
-                        'transaction_id': transaction.get('id'),
-                        'day_of_month': tx_date.day
-                    })
-                except ValueError:
-                    continue
-
-        # Identify recurring patterns (3+ transactions with same payee/amount)
-        for payee_name, amount_groups in payee_patterns.items():
-            for amount, transactions in amount_groups.items():
-                if len(transactions) >= 3:  # Need at least 3 instances to be considered recurring
-                    # Calculate average days between transactions
-                    dates = [tx['date'] for tx in transactions]
-                    dates.sort()
-
-                    if len(dates) >= 2:
-                        intervals = [(dates[i+1] - dates[i]).days for i in range(len(dates)-1)]
-                        avg_interval = sum(intervals) / len(intervals)
-
-                        # Consider it recurring if average interval is between 25-35 days (monthly)
-                        # or 6-8 days (weekly) or around 90 days (quarterly)
-                        is_recurring = (25 <= avg_interval <= 35 or
-                                      6 <= avg_interval <= 8 or
-                                      85 <= avg_interval <= 95)
-
-                        if is_recurring:
-                            # Get most common day of month
-                            days_of_month = [tx['day_of_month'] for tx in transactions]
-                            most_common_day = max(set(days_of_month), key=days_of_month.count)
-
-                            recurring.append({
-                                'payee_name': payee_name,
-                                'amount': amount,
-                                'amount_display': f'€{amount:,.2f}',
-                                'frequency_count': len(transactions),
-                                'avg_interval_days': round(avg_interval, 1),
-                                'most_common_day': most_common_day,
-                                'frequency_type': self._classify_frequency(avg_interval),
-                                'last_transaction_date': max(dates).isoformat(),
-                                'transactions': transactions[-3:]  # Keep last 3 transactions as examples
-                            })
-
-        return sorted(recurring, key=lambda x: x.get('amount', 0) or 0, reverse=True)
-
-    def _classify_frequency(self, avg_interval: float) -> str:
-        """Classify transaction frequency based on average interval"""
-        if 6 <= avg_interval <= 8:
-            return "Weekly"
-        elif 25 <= avg_interval <= 35:
-            return "Monthly"
-        elif 85 <= avg_interval <= 95:
-            return "Quarterly"
-        else:
-            return f"Every {avg_interval:.0f} days"
-
-    def _generate_calendar_heat_map(self) -> Dict[str, Any]:
-        """Generate calendar heat map data showing transaction frequency by day of month"""
-        if not self._transaction_data:
-            return {'days': {}, 'max_frequency': 0}
-
-        # Count transactions by day of month
-        day_counts = defaultdict(int)
-        day_amounts = defaultdict(float)
-
-        for transaction in self._transaction_data:
-            if transaction.get('amount', 0) >= 0:  # Skip income
-                continue
-
-            date_str = transaction.get('date', '')
-            if date_str:
-                try:
-                    tx_date = datetime.fromisoformat(date_str).date()
-                    day_of_month = tx_date.day
-                    amount = abs(transaction.get('amount', 0))
-
-                    day_counts[day_of_month] += 1
-                    day_amounts[day_of_month] += amount
-                except ValueError:
-                    continue
-
-        max_frequency = max(day_counts.values()) if day_counts else 0
-        max_amount = max(day_amounts.values()) if day_amounts else 0
-
-        # Generate heat map data for all 31 possible days
-        heat_map_days = {}
-        for day in range(1, 32):
-            frequency = day_counts.get(day, 0)
-            total_amount = day_amounts.get(day, 0)
-
-            # Calculate intensity (0-1) based on frequency
-            intensity = frequency / max_frequency if max_frequency and max_frequency > 0 else 0
-
-            heat_map_days[str(day)] = {
-                'day': day,
-                'frequency': frequency,
-                'total_amount': total_amount,
-                'total_amount_display': f'€{total_amount:,.2f}',
-                'intensity': intensity,
-                'color_opacity': min(0.1 + (intensity * 0.8), 0.9)  # 0.1 to 0.9 opacity
-            }
-
-        return {
-            'days': heat_map_days,
-            'max_frequency': max_frequency,
-            'max_amount': max_amount,
-            'max_amount_display': f'€{max_amount:,.2f}' if max_amount > 0 else '€0.00',
-            'total_transaction_days': len(day_counts)
-        }
-
-    def generate_html_report(self, metrics: Optional[BudgetHealthMetrics] = None) -> str:
-        """Generate HTML budget health report"""
+    # ------------------------------------------------------------------
+    # Main analysis entry point
+    # ------------------------------------------------------------------
+
+    def analyze(self) -> BudgetHealthMetrics:
+        logger.info("Analyzing budget health from local DB ...")
+        total_budgeted, total_spent, total_remaining = self._calculate_budget_totals()
+        overspent = self._find_overspent_categories()
+        underfunded = self._find_underfunded_goals()
+        trends = self._analyze_spending_trends()
+        accounts = self._summarize_accounts()
+        categories = self._analyze_categories()
+        top_cats = self._get_top_spending_categories()
+        top_payees = self._analyze_spending_by_payee()
+        recurring = self._detect_recurring_transactions()
+        heatmap = self._generate_calendar_heat_map()
+        score = self._calculate_health_score(total_budgeted, total_spent, overspent, underfunded)
+
+        return BudgetHealthMetrics(
+            total_budgeted=total_budgeted,
+            total_spent=total_spent,
+            total_remaining=total_remaining,
+            overspent_categories=overspent,
+            underfunded_goals=underfunded,
+            recent_spending_trend=trends,
+            account_summary=accounts,
+            category_analysis=categories,
+            top_spending_categories=top_cats,
+            spending_by_payee=top_payees,
+            recurring_transactions=recurring,
+            calendar_heat_map=heatmap,
+            health_score=score,
+        )
+
+    # ------------------------------------------------------------------
+    # HTML report generation
+    # ------------------------------------------------------------------
+
+    def generate_html_report(self, metrics: BudgetHealthMetrics | None = None) -> str:
         if metrics is None:
             metrics = self.analyze()
 
-        # Determine health status color and message
         if metrics.health_score >= 80:
             health_color = "#4CAF50"
             health_status = "Excellent"
@@ -590,7 +738,7 @@ class BudgetHealthAnalyzer:
                 .header {{ background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 30px; text-align: center; border-radius: 10px 10px 0 0; }}
                 .health-score {{ font-size: 48px; font-weight: bold; color: {health_color}; }}
                 .grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px; padding: 20px; }}
-                .card {{ background: white; border: 1px solid #ddd; border-radius: 8px; padding: 20px; box-shadow: 0 1px 3px rgba(0,0,0,0.1);width: fit-content; }}
+                .card {{ background: white; border: 1px solid #ddd; border-radius: 8px; padding: 20px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); width: fit-content; }}
                 .card h3 {{ margin-top: 0; color: #333; border-bottom: 2px solid #667eea; padding-bottom: 10px; }}
                 .metric {{ display: flex; justify-content: space-between; margin: 10px 0; }}
                 .metric-value {{ font-weight: bold; }}
@@ -600,10 +748,7 @@ class BudgetHealthAnalyzer:
                 .table {{ width: 100%; border-collapse: collapse; margin-top: 10px; }}
                 .table th, .table td {{ text-align: left; padding: 8px; border-bottom: 1px solid #ddd; }}
                 .table th {{ background-color: #f8f9fa; }}
-                /* Progress visuals removed per updated report scope */
                 .alert {{ padding: 15px; margin: 10px 0; border-radius: 4px; }}
-                .alert-danger {{ background-color: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }}
-                .alert-warning {{ background-color: #fff3cd; color: #856404; border: 1px solid #ffeaa7; }}
                 .alert-success {{ background-color: #d4edda; color: #155724; border: 1px solid #c3e6cb; }}
                 .timestamp {{ text-align: center; color: #666; font-size: 12px; padding: 10px; }}
                 .calendar-container {{ display: flex; justify-content: center; margin: 20px 0; }}
@@ -637,7 +782,6 @@ class BudgetHealthAnalyzer:
                 </div>
 
                 <div class="grid">
-                    <!-- Budget Overview (trimmed) -->
                     <div class="card">
                         <h3>📊 Budget Overview</h3>
                         <div class="metric">
@@ -650,13 +794,11 @@ class BudgetHealthAnalyzer:
                         </div>
                     </div>
 
-                    <!-- Cashflow Overview (Transactions) -->
-                    <div class=\"card\">
+                    <div class="card">
                         <h3>💵 Cashflow Overview (Transactions)</h3>
                         {self._render_cashflow_section()}
                     </div>
 
-                    <!-- Recent Spending Trends -->
                     <div class="card">
                         <h3>📈 Spending Trends</h3>
                         <div class="metric">
@@ -673,11 +815,10 @@ class BudgetHealthAnalyzer:
                         </div>
                         <div class="metric">
                             <span>Daily average (30d):</span>
-                            <span class="metric-value">€{metrics.recent_spending_trend['last_30_days']/30:,.2f}</span>
+                            <span class="metric-value">€{metrics.recent_spending_trend['last_30_days'] / 30:,.2f}</span>
                         </div>
                     </div>
 
-                    <!-- Account Summary -->
                     <div class="card">
                         <h3>💰 Account Balances</h3>
                         <table class="table">
@@ -691,14 +832,8 @@ class BudgetHealthAnalyzer:
                     </div>
         """
 
-        # Overspent Categories section removed per product direction
-
-        # Underfunded Goals section removed per product direction
-
-        # Add top spending categories
         if metrics.top_spending_categories:
             html += f"""
-                    <!-- Top Spending Categories -->
                     <div class="card">
                         <h3>🏷️ Top Spending Categories</h3>
                         <table class="table">
@@ -712,10 +847,8 @@ class BudgetHealthAnalyzer:
                     </div>
             """
 
-        # Add top payees
         if metrics.spending_by_payee:
             html += f"""
-                    <!-- Top Payees -->
                     <div class="card">
                         <h3>🏪 Top Payees</h3>
                         <table class="table">
@@ -729,10 +862,8 @@ class BudgetHealthAnalyzer:
                     </div>
             """
 
-        # Add recurring transactions section
         if metrics.recurring_transactions:
             html += f"""
-                    <!-- Recurring Transactions -->
                     <div class="card">
                         <h3>🔄 Recurring Transactions</h3>
                         <p style="margin-bottom: 15px; color: #666;">Detected {len(metrics.recurring_transactions)} recurring payment patterns</p>
@@ -747,12 +878,10 @@ class BudgetHealthAnalyzer:
                     </div>
             """
 
-        # Add calendar heat map
         html += f"""
-                    <!-- Transaction Calendar Heat Map -->
                     <div class="card" style="grid-column: 1 / -1;">
                         <h3>📅 Transaction Calendar Heat Map</h3>
-                        <p style="margin-bottom: 20px; color: #666;">Days with more frequent transactions are highlighted in red. Hover over days for details.</p>
+                        <p style="margin-bottom: 20px; color: #666;">Days with more frequent transactions are highlighted in red.</p>
                         <div class="calendar-container">
                             {self._generate_calendar_html(metrics.calendar_heat_map)}
                         </div>
@@ -765,7 +894,6 @@ class BudgetHealthAnalyzer:
                     </div>
         """
 
-        # Add success message if budget is healthy
         if metrics.health_score >= 80:
             html += """
                     <div class="card">
@@ -775,397 +903,137 @@ class BudgetHealthAnalyzer:
                     </div>
             """
 
-        html += """
+        html += f"""
                 </div>
                 <div class="timestamp">
-                    Report generated on """ + datetime.now().strftime('%Y-%m-%d at %H:%M:%S') + """
+                    Report generated on {datetime.now().strftime('%Y-%m-%d at %H:%M:%S')}
                 </div>
             </div>
         </body>
         </html>
         """
-
         return html
 
-    def _generate_account_rows(self, accounts: List[Dict]) -> str:
-        """Generate HTML table rows for accounts"""
-        rows = []
-        for account in accounts[:10]:  # Limit to top 10
-            rows.append(f"""
-                <tr>
-                    <td>{account['name']}</td>
-                    <td class="{'positive' if account['balance'] >= 0 else 'negative'}">{account['balance_display']}</td>
-                    <td>{account['cleared_balance_display']}</td>
-                </tr>
-            """)
-        return ''.join(rows)
+    # ------------------------------------------------------------------
+    # HTML helper methods
+    # ------------------------------------------------------------------
 
-    def _generate_recurring_rows(self, recurring: List[Dict]) -> str:
-        """Generate HTML table rows for recurring transactions"""
+    def _generate_account_rows(self, accounts: list[dict]) -> str:
         rows = []
-        for transaction in recurring:
-            frequency_badge = f"<span style='background: #17a2b8; color: white; padding: 2px 8px; border-radius: 12px; font-size: 11px;'>{transaction['frequency_type']}</span>"
-            rows.append(f"""
-                <tr>
-                    <td>{transaction['payee_name']}</td>
-                    <td class="negative">{transaction['amount_display']}</td>
-                    <td>{frequency_badge} ({transaction['frequency_count']}x)</td>
-                    <td style="text-align: center;">{transaction['most_common_day']}</td>
-                </tr>
-            """)
-        return ''.join(rows)
+        for acct in accounts[:10]:
+            cls = "positive" if acct["balance"] >= 0 else "negative"
+            rows.append(
+                f'<tr><td>{acct["name"]}</td>'
+                f'<td class="{cls}">{acct["balance_display"]}</td>'
+                f'<td>{acct["cleared_balance_display"]}</td></tr>'
+            )
+        return "\n".join(rows)
 
-    def _generate_calendar_html(self, calendar_data: Dict[str, Any]) -> str:
-        """Generate HTML for calendar heat map"""
-        if not calendar_data or not calendar_data.get('days'):
+    def _generate_recurring_rows(self, recurring: list[dict]) -> str:
+        rows = []
+        for t in recurring:
+            badge = (
+                f'<span style="background:#17a2b8;color:white;padding:2px 8px;'
+                f'border-radius:12px;font-size:11px;">{t["frequency_type"]}</span>'
+            )
+            rows.append(
+                f'<tr><td>{t["payee_name"]}</td>'
+                f'<td class="negative">{t["amount_display"]}</td>'
+                f'<td>{badge} ({t["frequency_count"]}x)</td>'
+                f'<td style="text-align:center;">{t["most_common_day"]}</td></tr>'
+            )
+        return "\n".join(rows)
+
+    def _generate_calendar_html(self, calendar_data: dict) -> str:
+        if not calendar_data or not calendar_data.get("days"):
             return "<p>No transaction data available for calendar visualization.</p>"
 
-        days = calendar_data['days']
-        max_frequency = calendar_data.get('max_frequency', 0)
+        days = calendar_data["days"]
+        max_freq = calendar_data.get("max_frequency", 0)
 
-        # Create calendar grid (7 columns for days of week, up to 5 rows)
-        calendar_html = '<div class="calendar-grid">'
-
-        # Generate all 31 possible days
+        html = '<div class="calendar-grid">'
         for day in range(1, 32):
-            day_data = days.get(str(day), {})
-            frequency = day_data.get('frequency', 0)
-            intensity = day_data.get('intensity', 0)
-            total_amount = day_data.get('total_amount_display', '€0.00')
+            d = days.get(str(day), {})
+            freq = d.get("frequency", 0)
+            intensity = d.get("intensity", 0)
+            total_amt = d.get("total_amount_display", "€0.00")
 
-            # Determine CSS class based on intensity
             if intensity >= 0.7:
                 css_class = "active"
-                opacity = day_data.get('color_opacity', 0.8)
+                opacity = d.get("color_opacity", 0.8)
             elif intensity >= 0.3:
                 css_class = "medium"
-                opacity = day_data.get('color_opacity', 0.5)
+                opacity = d.get("color_opacity", 0.5)
             else:
                 css_class = "low"
                 opacity = 0.1
 
-            tooltip_text = f"Day {day}: {frequency} transactions, {total_amount}"
+            html += (
+                f'<div class="calendar-day {css_class}" style="--opacity: {opacity};">'
+                f"{day}"
+                f'<div class="calendar-tooltip">Day {day}: {freq} transactions, {total_amt}</div>'
+                f"</div>"
+            )
+        html += "</div>"
+        return html
 
-            calendar_html += f"""
-                <div class="calendar-day {css_class}" style="--opacity: {opacity};">
-                    {day}
-                    <div class="calendar-tooltip">{tooltip_text}</div>
-                </div>
-            """
+    def _generate_top_spending_rows(self, categories: list[dict]) -> str:
+        rows = []
+        for cat in categories:
+            rows.append(
+                f'<tr><td>{cat["name"]}</td>'
+                f'<td class="negative">{cat["amount_display"]}</td></tr>'
+            )
+        return "\n".join(rows)
 
-        calendar_html += '</div>'
-        return calendar_html
+    def _generate_payee_rows(self, payees: list[dict]) -> str:
+        rows = []
+        for p in payees:
+            rows.append(
+                f'<tr><td>{p["name"]}</td>'
+                f'<td class="negative">{p["amount_display"]}</td></tr>'
+            )
+        return "\n".join(rows)
 
-    def detect_subscriptions_and_scheduled_payments(self) -> List[Dict[str, Any]]:
-        """
-        Detect potential subscriptions and scheduled payments with lenient criteria.
+    # ------------------------------------------------------------------
+    # Subscription detection test
+    # ------------------------------------------------------------------
 
-        Looks for amounts (±3 euro tolerance) appearing 2+ times over 2+ months.
-        More lenient than recurring transaction detection for catching variable subscriptions.
-
-        Returns:
-            List of detected subscription patterns with details
-        """
-        subscriptions = []
-
-        if not self._transaction_data:
-            return subscriptions
-
-        # Group transactions by payee
-        payee_groups = defaultdict(list)
-
-        for transaction in self._transaction_data:
-            if transaction.get('amount', 0) >= 0:  # Skip income transactions
-                continue
-
-            payee_name = transaction.get('payee_name', 'Unknown')
-            amount = abs(transaction.get('amount', 0))
-            date_str = transaction.get('date', '')
-
-            if date_str and payee_name != 'Unknown':
-                try:
-                    # Extract year-month without creating date objects
-                    year, month, day = date_str.split('-')
-                    month_year = f"{year}-{month}"
-
-                    payee_groups[payee_name].append({
-                        'date': date_str,
-                        'amount': amount,
-                        'transaction_id': transaction.get('id'),
-                        'month_year': month_year,
-                        'year': int(year),
-                        'month': int(month),
-                        'day': int(day)
-                    })
-                except (ValueError, IndexError):
-                    continue
-
-        # Analyze each payee for subscription patterns
-        for payee_name, transactions in payee_groups.items():
-            if len(transactions) < 2:  # Need at least 2 transactions
-                continue
-
-            # Sort transactions by date
-            transactions.sort(key=lambda x: x['date'])
-
-            # Group similar amounts (within ±3 euro tolerance)
-            amount_groups = defaultdict(list)
-
-            for transaction in transactions:
-                amount = transaction['amount']
-
-                # Find existing group with similar amount (±3 euro)
-                found_group = False
-                for existing_amount in amount_groups.keys():
-                    if abs(amount - existing_amount) <= 3.0:
-                        amount_groups[existing_amount].append(transaction)
-                        found_group = True
-                        break
-
-                if not found_group:
-                    amount_groups[amount].append(transaction)
-
-            # Check each amount group for subscription criteria
-            for base_amount, similar_transactions in amount_groups.items():
-                if len(similar_transactions) >= 2:  # 2+ occurrences
-                    # Check if transactions span 2+ different months
-                    unique_months = set(tx['month_year'] for tx in similar_transactions)
-
-                    if len(unique_months) >= 2:  # Span 2+ months
-                        # Calculate statistics
-                        amounts = [tx['amount'] for tx in similar_transactions]
-                        date_strings = [tx['date'] for tx in similar_transactions]
-
-                        avg_amount = sum(amounts) / len(amounts)
-                        min_amount = min(amounts)
-                        max_amount = max(amounts)
-
-                        # Calculate average interval between transactions using string dates
-                        if len(date_strings) >= 2:
-                            sorted_dates = sorted(date_strings)
-                            intervals = []
-                            for i in range(len(sorted_dates)-1):
-                                try:
-                                    date1 = datetime.fromisoformat(sorted_dates[i]).date()
-                                    date2 = datetime.fromisoformat(sorted_dates[i+1]).date()
-                                    intervals.append((date2 - date1).days)
-                                except ValueError:
-                                    continue
-                            avg_interval = sum(intervals) / len(intervals) if intervals else 0
-                        else:
-                            avg_interval = 0
-
-                        # Determine likely subscription type
-                        subscription_type = self._classify_subscription_type(avg_interval, len(similar_transactions), unique_months)
-
-                        # Calculate confidence score (0-100)
-                        confidence = self._calculate_subscription_confidence(
-                            similar_transactions, avg_interval, min_amount, max_amount
-                        )
-
-                        # Create clean transaction samples (JSON serializable)
-                        clean_samples = []
-                        for tx in similar_transactions[-3:]:
-                            clean_tx = {
-                                'date': tx['date'],
-                                'amount': tx['amount'],
-                                'transaction_id': tx['transaction_id'],
-                                'month_year': tx['month_year']
-                            }
-                            clean_samples.append(clean_tx)
-
-                        # Calculate first and last seen dates
-                        first_seen = min(date_strings)
-                        last_seen = max(date_strings)
-
-                        subscriptions.append({
-                            'payee_name': payee_name,
-                            'avg_amount': avg_amount,
-                            'avg_amount_display': f'€{avg_amount:,.2f}',
-                            'min_amount': min_amount,
-                            'max_amount': max_amount,
-                            'amount_range_display': f'€{min_amount:,.2f} - €{max_amount:,.2f}' if min_amount != max_amount else f'€{avg_amount:,.2f}',
-                            'occurrence_count': len(similar_transactions),
-                            'month_span': len(unique_months),
-                            'months_covered': sorted(list(unique_months)),
-                            'avg_interval_days': round(avg_interval, 1),
-                            'subscription_type': subscription_type,
-                            'confidence_score': confidence,
-                            'first_seen': first_seen,
-                            'last_seen': last_seen,
-                            'sample_transactions': clean_samples
-                        })
-
-        # Sort by confidence score and average amount
-        return sorted(subscriptions, key=lambda x: (x.get('confidence_score', 0) or 0, x.get('avg_amount', 0) or 0), reverse=True)
-
-    def _classify_subscription_type(self, avg_interval: float, count: int, unique_months: set) -> str:
-        """Classify the type of subscription based on patterns"""
-        if 25 <= avg_interval <= 35:
-            return "Monthly Subscription"
-        elif 6 <= avg_interval <= 10:
-            return "Weekly Service"
-        elif 85 <= avg_interval <= 95:
-            return "Quarterly Payment"
-        elif avg_interval > 180:
-            return "Annual/Bi-annual"
-        elif count >= 4 and len(unique_months) >= 3:
-            return "Regular Service"
-        elif avg_interval <= 5:
-            return "Frequent Payment"
-        else:
-            return "Scheduled Payment"
-
-    def _calculate_subscription_confidence(self, transactions: List[Dict], avg_interval: float,
-                                         min_amount: float, max_amount: float) -> int:
-        """Calculate confidence score (0-100) for subscription detection"""
-        score = 50  # Base score
-
-        # More occurrences = higher confidence
-        score += min(30, len(transactions) * 5)
-
-        # Consistent amounts = higher confidence
-        amount_variance = (max_amount - min_amount) / max_amount if max_amount > 0 else 0
-        if amount_variance <= 0.05:  # Within 5%
-            score += 15
-        elif amount_variance <= 0.10:  # Within 10%
-            score += 10
-
-        # Regular intervals = higher confidence
-        if 25 <= avg_interval <= 35:  # Monthly-ish
-            score += 10
-        elif 6 <= avg_interval <= 10:   # Weekly-ish
-            score += 8
-
-        # Longer observation period = higher confidence
-        date_strings = [tx['date'] for tx in transactions]
+    def test_subscription_detection(self) -> dict:
         try:
-            first_date = datetime.fromisoformat(min(date_strings)).date()
-            last_date = datetime.fromisoformat(max(date_strings)).date()
-            observation_period = (last_date - first_date).days
-            if observation_period >= 60:  # 2+ months
-                score += 5
-        except ValueError:
-            pass  # Skip if date parsing fails
-
-        return min(100, max(0, score))
-
-    def test_subscription_detection(self) -> Dict[str, Any]:
-        """
-        Test method to verify subscription detection works and is JSON serializable.
-        Returns a simplified version for testing purposes.
-        """
-        try:
-            if not self._transaction_data:
-                self._load_data()
-
             subscriptions = self.detect_subscriptions_and_scheduled_payments()
-
-            # Test JSON serialization
-            import json
-            json_test = json.dumps({
-                "count": len(subscriptions),
-                "first_subscription": subscriptions[0] if subscriptions else None,
-                "test_status": "success"
-            })
-
+            json.dumps(
+                {
+                    "count": len(subscriptions),
+                    "first": subscriptions[0] if subscriptions else None,
+                }
+            )
             return {
                 "status": "success",
                 "subscription_count": len(subscriptions),
                 "json_serializable": True,
-                "sample_subscription": subscriptions[0] if subscriptions else None
+                "sample": subscriptions[0] if subscriptions else None,
             }
         except Exception as e:
-            return {
-                "status": "error",
-                "error": str(e),
-                "json_serializable": False
-            }
-
-    def _generate_overspent_rows(self, categories: List[Dict]) -> str:
-        """Generate HTML table rows for overspent categories"""
-        rows = []
-        for category in categories:
-            rows.append(f"""
-                <tr>
-                    <td>{category['name']}</td>
-                    <td>€{category['budgeted']:,.2f}</td>
-                    <td class="negative">€{category['spent']:,.2f}</td>
-                    <td class="negative">{category['overspent_display']}</td>
-                </tr>
-            """)
-        return ''.join(rows)
-
-    def _generate_underfunded_rows(self, goals: List[Dict]) -> str:
-        """Generate HTML table rows for underfunded goals"""
-        rows = []
-        for goal in goals:
-            rows.append(f"""
-                <tr>
-                    <td>{goal['name']}</td>
-                    <td>{goal['goal_target_display']}</td>
-                    <td class="warning">{goal['under_funded_display']}</td>
-                    <td>{goal['percentage_complete']:.1f}%</td>
-                </tr>
-            """)
-        return ''.join(rows)
-
-    def _generate_top_spending_rows(self, categories: List[Dict]) -> str:
-        """Generate HTML table rows for top spending categories"""
-        rows = []
-        for category in categories:
-            rows.append(f"""
-                <tr>
-                    <td>{category['name']}</td>
-                    <td class="negative">{category['amount_display']}</td>
-                </tr>
-            """)
-        return ''.join(rows)
-
-    def _generate_payee_rows(self, payees: List[Dict]) -> str:
-        """Generate HTML table rows for top payees"""
-        rows = []
-        for payee in payees:
-            rows.append(f"""
-                <tr>
-                    <td>{payee['name']}</td>
-                    <td class="negative">{payee['amount_display']}</td>
-                </tr>
-            """)
-        return ''.join(rows)
+            return {"status": "error", "error": str(e), "json_serializable": False}
 
 
-def main():
-    """Example usage of the budget health analyzer"""
-    # You'll need to provide your budget ID
-    budget_id = "d2f2e23f-f445-498d-9712-e356a90a4f64"  # Example from JSON
+def main() -> None:
+    """Generate a budget health report from the local database."""
+    import sys
 
-    try:
-        analyzer = BudgetHealthAnalyzer(budget_id)
-
-        # Generate the report
-        html_report = analyzer.generate_html_report()
-
-        # Save to file
-        with open('budget_health_report.html', 'w', encoding='utf-8') as f:
-            f.write(html_report)
-
-        print("Budget health report generated successfully!")
-        print("Open 'budget_health_report.html' in your browser to view the report.")
-
-        # Also return the metrics for potential API use
-        metrics = analyzer.analyze()
-        print(f"\nQuick Summary:")
-        print(f"Health Score: {metrics.health_score:.0f}/100")
-        print(f"Total Budgeted: €{metrics.total_budgeted:,.2f}")
-        print(f"Total Spent: €{metrics.total_spent:,.2f}")
-        print(f"Overspent Categories: {len(metrics.overspent_categories)}")
-
-        return html_report, metrics
-
-    except Exception as e:
-        logger.error(f"Error generating budget health report: {e}")
-        raise
+    db_arg = sys.argv[1] if len(sys.argv) > 1 else "localdb/budget.db"
+    analyzer = BudgetHealthAnalyzer(db_arg)
+    html = analyzer.generate_html_report()
+    out = Path("budget_health_report.html")
+    out.write_text(html, encoding="utf-8")
+    metrics = analyzer.analyze()
+    print(f"✅ Budget health report → {out}")
+    print(f"   Health Score: {metrics.health_score:.0f}/100")
+    print(f"   Total Spent:  €{metrics.total_spent:,.2f}")
+    print(f"   Remaining:    €{metrics.total_remaining:,.2f}")
+    print(f"   Transactions: {len(analyzer._load_transactions())}")
+    analyzer._close()
 
 
 if __name__ == "__main__":

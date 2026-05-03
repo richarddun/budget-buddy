@@ -1,24 +1,37 @@
-import os
+"""Daily ingestion scheduler — local DB freshness checks only.
+
+This module has been rewritten to remove all YNAB API calls (P4.3).
+Instead of fetching from YNAB, it:
+- Checks freshness of the local database (last CSV import date)
+- Runs nightly forecast snapshots
+- Executes alert checks
+- Reports data staleness
+
+The scheduler loop shell is preserved for future re-activation as a
+general data-refresh tick.
+"""
+
+from __future__ import annotations
+
 import asyncio
 import logging
+import os
 from datetime import datetime, timedelta, time
+from pathlib import Path
+from typing import Any
 from zoneinfo import ZoneInfo
 
-from ynab_sdk_client import YNABSdkClient
-from localdb import payee_db
 from jobs.nightly_snapshot import run_nightly_snapshot_async
-try:
-    from alerts.engine import run_alert_checks  # type: ignore
-except Exception:  # pragma: no cover
-    run_alert_checks = None  # type: ignore
 
-# Optional: use the existing agent to let AI review/adjust
 try:
-    from agents.budget_agent import budget_agent  # type: ignore
-except Exception:  # pragma: no cover
-    budget_agent = None  # type: ignore
+    from alerts.engine import run_alert_checks  # type: ignore[import-untyped]
+except Exception:
+    run_alert_checks = None
 
 logger = logging.getLogger("uvicorn.error")
+
+DEFAULT_DB_PATH = Path("localdb/budget.db")
+DEFAULT_STALE_AFTER_HOURS = 48
 
 
 def _tz() -> ZoneInfo:
@@ -39,115 +52,118 @@ def _next_run_at(hour: int, minute: int) -> datetime:
     return today_target
 
 
-async def _ai_review_transactions_if_enabled(txns_text: str) -> None:
-    if not os.getenv("ENABLE_DAILY_AI_REVIEW", "false").lower() in ("1", "true", "yes", "on"):  # noqa: E501
-        return
-    if budget_agent is None:
-        logger.warning("ENABLE_DAILY_AI_REVIEW is on, but budget_agent is unavailable")
-        return
+def _last_import_time(db_path: Path) -> datetime | None:
+    """Return the most recent CSV import timestamp from the ingest_audit table.
 
-    prompt = (
-        "Daily review at 7:00 AM.\n"
-        "You are connected to YNAB tools.\n"
-        "1) Inspect the recent transactions listed below (most recent first).\n"
-        "2) Identify any overspent categories or obvious mis-categorizations.\n"
-        "3) If appropriate, adjust budgeted amounts for the current month to keep 'Available' non-negative in essential categories, "
-        "   using update_month_category with conservative changes.\n"
-        "4) Respond concisely with what you changed.\n\n"
-        "Recent transactions:\n"
-        f"{txns_text}\n"
-    )
-    try:
-        # Non-streaming run; tools within agent will perform updates.
-        await budget_agent.run(prompt)  # type: ignore[attr-defined]
-    except Exception as e:  # pragma: no cover
-        logger.exception(f"AI review failed: {e}")
-
-
-async def run_daily_ingestion() -> dict:
-    """Fetch recent transactions and optionally let AI review/adjust budget.
-
-    Returns a summary dict including at least: {status, fetched, since_date}.
+    Returns None if no CSV imports have been recorded or the table is missing.
     """
-    budget_id = os.getenv("YNAB_BUDGET_ID")
-    if not budget_id:
-        logger.warning("YNAB_BUDGET_ID not set; skipping daily ingestion.")
-        return {"status": "skipped", "reason": "missing_budget_id"}
-
-    client = YNABSdkClient()
-    tz = _tz()
-    today = datetime.now(tz).date()
-    # Configurable lookback window (default 3 days) to avoid missing backdated imports
-    lookback_days = 3
+    if not db_path.exists():
+        return None
     try:
-        lookback_days = int(os.getenv("YNAB_INGEST_LOOKBACK_DAYS", str(lookback_days)))
-        if lookback_days < 1:
-            lookback_days = 1
-    except Exception:
-        lookback_days = 3
-    since_date = (today - timedelta(days=lookback_days)).isoformat()
+        import sqlite3
 
-    # Always bypass cached reads for daily sync — purge cache first
-    try:
+        conn = sqlite3.connect(str(db_path))
         try:
-            client.clear_cache()
-        except Exception:
-            pass
-
-        txns = client.get_transactions(budget_id, since_date)
-        txns_text = client.slim_transactions_text(txns)
-        logger.info(
-            f"Daily ingestion: fetched {len(txns)} transactions since {since_date}"
-        )
-    except Exception as e:
-        logger.exception(f"Failed to fetch transactions: {e}")
-        return {"status": "error", "reason": str(e)}
-
-    # Save locally and attempt auto-categorisation via payee rules
-    for t in txns:
-        payee = t.get("payee_name") or ""
-        amount = float(t.get("amount", 0.0))
-        date = t.get("date") or datetime.now(tz).date().isoformat()
-        ynab_tx_id = t.get("id")
-
-        match = payee_db.match_payee(payee, threshold=0.6) if payee else None
-        if match:
-            payee_db.record_local_transaction(
-                ynab_tx_id=ynab_tx_id,
-                date=date,
-                payee=payee,
-                amount=amount,
-                matched_rule_id=match["rule_id"],
-                assigned_category=match.get("suggested_category"),
-                assigned_subcategory=match.get("suggested_subcategory"),
-                confidence=match.get("confidence"),
-                source="auto",
-                notes=match.get("suggested_memo"),
+            cur = conn.execute(
+                "SELECT run_started_at FROM ingest_audit "
+                "WHERE source = 'csv' OR source = 'ynab-csv' "
+                "ORDER BY run_started_at DESC LIMIT 1"
             )
-        else:
-            payee_db.record_local_transaction(
-                ynab_tx_id=ynab_tx_id,
-                date=date,
-                payee=payee,
-                amount=amount,
-                matched_rule_id=None,
-                assigned_category=None,
-                assigned_subcategory=None,
-                confidence=None,
-                source="import",
-            )
+            row = cur.fetchone()
+            if row:
+                raw = row[0]
+                if raw:
+                    return datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        finally:
+            conn.close()
+    except Exception as exc:
+        logger.warning(f"Could not read last import time: {exc}")
+    return None
 
-    # Optional AI review pass (local-only suggestions/updates via tools)
-    await _ai_review_transactions_if_enabled(txns_text)
 
-    # Run alert checks on new transactions (e.g., large debits)
+def _staleness_summary(db_path: Path) -> dict[str, Any]:
+    """Return a staleness indicator dict for the local database.
+
+    Keys:
+        last_import_at: ISO timestamp or None
+        hours_since_import: hours elapsed (or None)
+        is_stale: True if > STALE_AFTER_HOURS since last import
+        stale_threshold_hours: the configured threshold
+    """
+    stale_hours = int(os.getenv("STALE_AFTER_HOURS", str(DEFAULT_STALE_AFTER_HOURS)))
+    last = _last_import_time(db_path)
+    now = datetime.now().astimezone()
+    hours_since: float | None = None
+    is_stale = True
+
+    if last is not None:
+        delta = now - last
+        hours_since = delta.total_seconds() / 3600
+        is_stale = hours_since > stale_hours
+
+    return {
+        "last_import_at": last.isoformat() if last else None,
+        "hours_since_import": round(hours_since, 1) if hours_since is not None else None,
+        "is_stale": is_stale,
+        "stale_threshold_hours": stale_hours,
+    }
+
+
+async def run_daily_ingestion(
+    db_path: str | Path = DEFAULT_DB_PATH,
+) -> dict[str, Any]:
+    """Check database freshness, run snapshots and alert checks.
+
+    Returns a summary dict with status, staleness info, and snapshot result.
+    """
+    path = Path(db_path)
+    staleness = _staleness_summary(path)
+
+    logger.info(
+        f"Daily ingestion check — DB: {path} "
+        f"| last import: {staleness['last_import_at']} "
+        f"| stale: {staleness['is_stale']}"
+    )
+
+    # Generate a freshness label for the UI
+    if staleness["last_import_at"] is None:
+        freshness = "never_imported"
+    elif staleness["is_stale"]:
+        freshness = "stale"
+    else:
+        freshness = "fresh"
+
+    # Run nightly forecast snapshot (async)
+    try:
+        snapshot_result = await run_nightly_snapshot_async()
+    except Exception as exc:
+        logger.exception(f"Nightly snapshot failed: {exc}")
+        snapshot_result = {"status": "error", "reason": str(exc)}
+
+    # Run alert checks on existing data
     try:
         if run_alert_checks is not None:
             run_alert_checks()
-    except Exception as e:  # pragma: no cover
-        logger.exception(f"Alert checks after ingestion failed: {e}")
+    except Exception as exc:
+        logger.exception(f"Alert checks failed: {exc}")
 
-    return {"status": "ok", "fetched": len(txns), "since_date": since_date}
+    # Auto-create recurring transactions from due templates
+    try:
+        from jobs.recurring_templates import run_recurring_auto_create
+        recurring_result = run_recurring_auto_create(path)
+        if recurring_result["created"] > 0:
+            logger.info(f"Auto-created {recurring_result['created']} recurring transactions")
+    except Exception as exc:
+        logger.exception(f"Recurring auto-create failed: {exc}")
+        recurring_result = {"status": "error", "reason": str(exc)}
+
+    return {
+        "status": "ok",
+        "freshness": freshness,
+        "staleness": staleness,
+        "snapshot": snapshot_result,
+        "recurring_auto_create": recurring_result,
+    }
 
 
 async def scheduler_loop(hour: int = 7, minute: int = 0) -> None:
@@ -158,24 +174,23 @@ async def scheduler_loop(hour: int = 7, minute: int = 0) -> None:
         now = datetime.now(tz)
         sleep_s = max(0.0, (run_at - now).total_seconds())
         logger.info(
-            f"Daily scheduler sleeping {sleep_s:.0f}s until {run_at.isoformat()}"
+            f"Daily ingestion scheduler — sleeping {sleep_s:.0f}s until {run_at.isoformat()}"
         )
         try:
             await asyncio.sleep(sleep_s)
-        except asyncio.CancelledError:  # graceful shutdown
+        except asyncio.CancelledError:
             raise
 
         try:
             await run_daily_ingestion()
         except asyncio.CancelledError:
             raise
-        except Exception as e:  # pragma: no cover
-            logger.exception(f"Daily ingestion job crashed: {e}")
-            # Do not break the loop; still attempt snapshot so UI can detect staleness by timestamp
-        # After ingestion, run nightly forecast snapshot job
+        except Exception:
+            logger.exception("Daily ingestion job crashed (scheduler continues)")
+            # Don't break the loop — still try snapshot
         try:
             await run_nightly_snapshot_async()
         except asyncio.CancelledError:
             raise
-        except Exception as e:  # pragma: no cover
-            logger.exception(f"Nightly snapshot job failed: {e}")
+        except Exception:
+            logger.exception("Nightly snapshot job failed (scheduler continues)")

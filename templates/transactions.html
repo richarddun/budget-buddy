@@ -65,6 +65,7 @@
                 <th style="width:120px">Amount</th>
                 <th style="width:90px">Cleared</th>
                 <th style="width:160px">Source</th>
+                <th style="width:100px">Splits</th>
               </tr>
             </thead>
             <tbody></tbody>
@@ -105,6 +106,7 @@
           const tr = document.createElement('tr');
           const d = (it.posted_at||'').replace('T',' ').replace('Z',' UTC');
           const amt = fmtCents(it.amount_cents);
+          const splitLabel = it.has_splits ? `<a href="/transactions/${it.idempotency_key}/splits" style="color:#60a5fa;text-decoration:none;font-size:12px">🔀 ${(it.splits_total_cents/100).toFixed(2)}</a>` : `<a href="/transactions/${it.idempotency_key}/splits" style="color:#9ca3af;text-decoration:none;font-size:12px">🔀 Split</a>`;
           tr.innerHTML = `
             <td>${d}</td>
             <td>${it.account?.name||''}</td>
@@ -113,6 +115,7 @@
             <td class="${it.amount_cents<0?'neg':'pos'}" style="text-align:right">${amt}</td>
             <td>${it.is_cleared?'✔︎':'—'}</td>
             <td>${it.source||''}</td>
+            <td>${splitLabel}</td>
           `;
           tbody.appendChild(tr);
         }
@@ -126,7 +129,7 @@
           const j = await fetchJSON(url);
           render(j.items||[], j.total||0);
         } catch (e) {
-          const tbody = document.querySelector('#tbl tbody'); tbody.innerHTML = '<tr><td colspan="7">Failed to load</td></tr>';
+          const tbody = document.querySelector('#tbl tbody'); tbody.innerHTML = '<tr><td colspan="8">Failed to load</td></tr>';
         }
       }
 

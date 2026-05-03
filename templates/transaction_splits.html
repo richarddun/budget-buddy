@@ -1,0 +1,326 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Transaction Splits</title>
+    {% if csrf_token %}<meta name="csrf-token" content="{{ csrf_token }}">{% endif %}
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <style>
+      :root {
+        --bg: #0f172a;
+        --panel: #111827;
+        --card: #1f2937;
+        --text: #e5e7eb;
+        --muted: #9ca3af;
+        --accent: #60a5fa;
+        --green: #86efac;
+        --red: #fecaca;
+      }
+      body { margin:0; font-family: system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, 'Helvetica Neue', Arial; background:var(--bg); color:var(--text); }
+      .container { max-width: 900px; margin: 0 auto; padding: 20px; }
+      .header { display:flex; justify-content:space-between; align-items:center; margin-bottom: 16px; }
+      .back { display:inline-block; padding:8px 12px; border-radius:6px; background:#3b82f6; color:#06142b; text-decoration:none; font-weight:600; font-size:14px; }
+      .panel { background:var(--panel); border-radius:10px; padding:16px; margin-bottom:16px; border:1px solid #1f2937; }
+      .section-title { font-size:16px; font-weight:700; margin:0 0 10px 0; }
+      .txn-header { display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; }
+      .txn-payee { font-size:20px; font-weight:700; }
+      .txn-amount { font-size:24px; font-weight:700; }
+      .txn-meta { color:var(--muted); font-size:13px; }
+      table { width:100%; border-collapse:collapse; }
+      th, td { border-bottom:1px solid #1f2937; padding:10px 8px; text-align:left; }
+      th { color:var(--muted); font-size:12px; text-transform:uppercase; letter-spacing:0.5px; }
+      .muted { color:var(--muted); font-size:12px; }
+      .neg { color:var(--red); }
+      .pos { color:var(--green); }
+      input, select { background:#0b1222; color:var(--text); border:1px solid #374151; border-radius:6px; padding:6px 8px; font-size:14px; }
+      input:focus, select:focus { outline:2px solid var(--accent); outline-offset:1px; }
+      .btn { background:#2563eb; color:#fff; border:none; border-radius:6px; padding:8px 12px; cursor:pointer; font-size:13px; font-weight:600; }
+      .btn:hover { background:#1d4ed8; }
+      .btn-sm { padding:4px 8px; font-size:12px; }
+      .btn-danger { background:#dc2626; }
+      .btn-danger:hover { background:#b91c1c; }
+      .btn-ghost { background:transparent; color:var(--muted); border:1px solid #374151; }
+      .btn-ghost:hover { background:#1f2937; color:var(--text); }
+      .badge { display:inline-block; background:#374151; padding:2px 8px; border-radius:999px; font-size:11px; color:var(--muted); }
+      .progress-bar { height:6px; background:#374151; border-radius:999px; margin:6px 0; overflow:hidden; }
+      .progress-fill { height:100%; background:var(--accent); border-radius:999px; transition: width 0.3s; }
+      .progress-fill.warn { background:#fbbf24; }
+      .progress-fill.danger { background:#ef4444; }
+      .inline-form { display:flex; gap:6px; align-items:center; flex-wrap:wrap; }
+      .split-row { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+      .split-row input, .split-row select { flex:1; min-width:100px; }
+      .toast { position:fixed; bottom:20px; right:20px; background:#065f46; color:#d1fae5; padding:12px 20px; border-radius:8px; font-size:14px; z-index:999; opacity:0; transition:opacity 0.3s; }
+      .toast.error { background:#7f1d1d; color:#fecaca; }
+      .toast.show { opacity:1; }
+      .empty-state { text-align:center; padding:30px; color:var(--muted); }
+      .split-list { margin-top:12px; }
+    </style>
+  </head>
+  <body>
+    <script>window.APP_BASE = '{{ request.url_for("index") }}'.replace(/\/$/, '');</script>
+    <script src="{{ request.url_for('static', path='sidebar.js') }}"></script>
+    <div class="container">
+      <div class="header">
+        <h1 style="margin:0">🔀 Transaction Splits</h1>
+        <a class="back" href="{{ request.url_for('transactions_browser') }}">← Back to Transactions</a>
+      </div>
+
+      <div class="panel" id="txn-info">
+        <div class="txn-header">
+          <div>
+            <div class="txn-payee" id="txn-payee">—</div>
+            <div class="txn-meta" id="txn-meta">Loading transaction info...</div>
+          </div>
+          <div>
+            <div class="txn-amount" id="txn-amount">—</div>
+            <div class="txn-meta">Original amount</div>
+          </div>
+        </div>
+        <div style="margin-top:10px">
+          <div style="display:flex; justify-content:space-between; font-size:13px;">
+            <span class="muted">Split used: <span id="split-used">€0.00</span></span>
+            <span class="muted">Remaining: <span id="split-remaining">€0.00</span></span>
+          </div>
+          <div class="progress-bar">
+            <div class="progress-fill" id="split-progress" style="width:0%"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="section-title">Add Split</div>
+        <div class="split-row">
+          <select id="new-category" style="flex:2">
+            <option value="">Select category...</option>
+          </select>
+          <input id="new-amount" type="number" min="1" step="1" placeholder="Amount (cents)" style="flex:1">
+          <input id="new-memo" type="text" placeholder="Memo (optional)" style="flex:1.5">
+          <button id="btn-add" class="btn">+ Add Split</button>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="section-title">Current Splits</div>
+        <div id="splits-list">
+          <div class="empty-state">No splits yet. Use the form above to add one.</div>
+        </div>
+      </div>
+    </div>
+
+    <div id="toast" class="toast"></div>
+
+    <script>
+      // Get idempotency_key from URL
+      const key = window.location.pathname.split('/').pop();
+
+      // --- Helpers ---
+      function fmtCents(c) {
+        const s = c < 0 ? '-' : '';
+        const a = Math.abs(c);
+        return s + '€' + (a / 100).toFixed(2);
+      }
+
+      function showToast(msg, isError) {
+        const t = document.getElementById('toast');
+        t.textContent = msg;
+        t.className = 'toast ' + (isError ? 'error' : '') + ' show';
+        setTimeout(() => t.classList.remove('show'), 3000);
+      }
+
+      async function api(url, opts) {
+        const csrf = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '';
+        const headers = { 'Content-Type': 'application/json', 'X-CSRF-Token': csrf };
+        const r = await fetch(url, { ...opts, headers, credentials: 'same-origin' });
+        const data = await r.json();
+        if (!r.ok) throw new Error(data.detail || 'HTTP ' + r.status);
+        return data;
+      }
+
+      // --- Load categories ---
+      async function loadCategories() {
+        const base = '{{ request.url_for("index") }}'.replace(/\/$/, '');
+        const j = await api(base + '/api/categories');
+        const sel = document.getElementById('new-category');
+        (j.categories || []).forEach(c => {
+          if (c.is_archived) return;
+          const o = document.createElement('option');
+          o.value = c.id;
+          o.textContent = c.name;
+          sel.appendChild(o);
+        });
+      }
+
+      // --- Load transaction + splits ---
+      async function loadSplits() {
+        const base = '{{ request.url_for("index") }}'.replace(/\/$/, '');
+        try {
+          const j = await api(base + '/api/transactions/' + key + '/splits');
+          const txn = j.transaction;
+          document.getElementById('txn-payee').textContent = txn.payee || '(no payee)';
+          document.getElementById('txn-meta').textContent = 'Transaction: ' + txn.idempotency_key;
+          document.getElementById('txn-amount').textContent = fmtCents(txn.amount_cents);
+          document.getElementById('txn-amount').className = 'txn-amount ' + (txn.amount_cents < 0 ? 'neg' : 'pos');
+
+          updateProgress(j.splits, txn);
+          renderSplits(j.splits);
+        } catch (e) {
+          document.getElementById('txn-meta').textContent = 'Failed to load: ' + e.message;
+        }
+      }
+
+      function updateProgress(splits, txn) {
+        const total = splits.reduce((s, sp) => s + sp.amount_cents, 0);
+        const absAmt = Math.abs(txn.amount_cents);
+        const pct = absAmt > 0 ? Math.min(100, (total / absAmt) * 100) : 0;
+        document.getElementById('split-used').textContent = fmtCents(total);
+        document.getElementById('split-remaining').textContent = fmtCents(absAmt - total);
+        const bar = document.getElementById('split-progress');
+        bar.style.width = pct + '%';
+        bar.className = 'progress-fill' + (pct >= 100 ? ' danger' : pct >= 80 ? ' warn' : '');
+      }
+
+      function renderSplits(splits) {
+        const container = document.getElementById('splits-list');
+        if (!splits || splits.length === 0) {
+          container.innerHTML = '<div class="empty-state">No splits yet. Use the form above to add one.</div>';
+          return;
+        }
+
+        let html = '<table><thead><tr><th>Category</th><th>Amount</th><th>Memo</th><th style="width:200px">Actions</th></tr></thead><tbody>';
+        for (const sp of splits) {
+          html += '<tr data-split-id="' + sp.id + '">';
+          html += '<td class="cat-display">' + (sp.category_name || 'Uncategorized') + '</td>';
+          html += '<td class="amt-display" style="font-weight:600">' + fmtCents(sp.amount_cents) + '</td>';
+          html += '<td class="memo-display">' + (sp.memo || '—') + '</td>';
+          html += '<td>';
+          html += '<button class="btn btn-sm btn-ghost btn-edit" data-id="' + sp.id + '">✏️ Edit</button> ';
+          html += '<button class="btn btn-sm btn-danger btn-delete" data-id="' + sp.id + '">🗑️ Delete</button>';
+          html += '</td></tr>';
+
+          // Inline edit row (hidden by default)
+          html += '<tr data-edit-id="' + sp.id + '" style="display:none">';
+          html += '<td colspan="4">';
+          html += '<div class="inline-form">';
+          html += '<select class="edit-cat" data-id="' + sp.id + '" style="flex:2"></select>';
+          html += '<input class="edit-amt" data-id="' + sp.id + '" type="number" min="1" step="1" value="' + sp.amount_cents + '" style="flex:1;width:100px">';
+          html += '<input class="edit-memo" data-id="' + sp.id + '" type="text" value="' + (sp.memo || '') + '" placeholder="Memo" style="flex:1.5">';
+          html += '<button class="btn btn-sm btn-save" data-id="' + sp.id + '">💾 Save</button> ';
+          html += '<button class="btn btn-sm btn-ghost btn-cancel" data-id="' + sp.id + '">Cancel</button>';
+          html += '</div>';
+          html += '</td></tr>';
+        }
+        html += '</tbody></table>';
+        container.innerHTML = html;
+
+        // Populate edit category dropdowns
+        const base = '{{ request.url_for("index") }}'.replace(/\/$/, '');
+        (async () => {
+          const j = await api(base + '/api/categories');
+          document.querySelectorAll('.edit-cat').forEach(sel => {
+            const sid = sel.dataset.id;
+            const split = splits.find(s => String(s.id) === sid);
+            (j.categories || []).forEach(c => {
+              if (c.is_archived) return;
+              const o = document.createElement('option');
+              o.value = c.id;
+              o.textContent = c.name;
+              if (split && split.category_id === c.id) o.selected = true;
+              sel.appendChild(o);
+            });
+          });
+        })();
+
+        // Wire edit buttons
+        document.querySelectorAll('.btn-edit').forEach(btn => {
+          btn.addEventListener('click', () => {
+            const id = btn.dataset.id;
+            document.querySelector('tr[data-split-id="' + id + '"]').style.display = 'none';
+            document.querySelector('tr[data-edit-id="' + id + '"]').style.display = 'table-row';
+          });
+        });
+
+        // Wire save buttons
+        document.querySelectorAll('.btn-save').forEach(btn => {
+          btn.addEventListener('click', async () => {
+            const id = btn.dataset.id;
+            const cat = document.querySelector('.edit-cat[data-id="' + id + '"]').value;
+            const amt = document.querySelector('.edit-amt[data-id="' + id + '"]').value;
+            const memo = document.querySelector('.edit-memo[data-id="' + id + '"]').value;
+            const body = {};
+            if (cat) body.category_id = parseInt(cat);
+            if (amt) body.amount_cents = parseInt(amt);
+            body.memo = memo || null;
+            try {
+              await api(base + '/api/transactions/' + key + '/splits/' + id, {
+                method: 'PUT',
+                body: JSON.stringify(body),
+              });
+              showToast('Split updated!');
+              loadSplits();
+            } catch (e) {
+              showToast('Error: ' + e.message, true);
+            }
+          });
+        });
+
+        // Wire cancel buttons
+        document.querySelectorAll('.btn-cancel').forEach(btn => {
+          btn.addEventListener('click', () => {
+            const id = btn.dataset.id;
+            document.querySelector('tr[data-split-id="' + id + '"]').style.display = 'table-row';
+            document.querySelector('tr[data-edit-id="' + id + '"]').style.display = 'none';
+          });
+        });
+
+        // Wire delete buttons
+        document.querySelectorAll('.btn-delete').forEach(btn => {
+          btn.addEventListener('click', async () => {
+            if (!confirm('Delete this split?')) return;
+            const id = btn.dataset.id;
+            try {
+              await api(base + '/api/transactions/' + key + '/splits/' + id, { method: 'DELETE' });
+              showToast('Split deleted');
+              loadSplits();
+            } catch (e) {
+              showToast('Error: ' + e.message, true);
+            }
+          });
+        });
+      }
+
+      // --- Add split ---
+      document.getElementById('btn-add').addEventListener('click', async () => {
+        const cat = document.getElementById('new-category').value;
+        const amt = document.getElementById('new-amount').value;
+        const memo = document.getElementById('new-memo').value;
+
+        if (!cat) { showToast('Please select a category', true); return; }
+        if (!amt || parseInt(amt) <= 0) { showToast('Please enter a positive amount', true); return; }
+
+        const base = '{{ request.url_for("index") }}'.replace(/\/$/, '');
+        try {
+          await api(base + '/api/transactions/' + key + '/splits', {
+            method: 'POST',
+            body: JSON.stringify({
+              category_id: parseInt(cat),
+              amount_cents: parseInt(amt),
+              memo: memo.trim() || null,
+            }),
+          });
+          showToast('Split added!');
+          document.getElementById('new-amount').value = '';
+          document.getElementById('new-memo').value = '';
+          loadSplits();
+        } catch (e) {
+          showToast('Error: ' + e.message, true);
+        }
+      });
+
+      // --- Init ---
+      (async () => {
+        await loadCategories();
+        await loadSplits();
+      })();
+    </script>
+  </body>
+</html>

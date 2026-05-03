@@ -78,7 +78,8 @@ def list_transactions(
     sql = f"""
         SELECT t.idempotency_key, t.posted_at, t.amount_cents, t.payee, t.memo,
                t.source, t.category_id, t.is_cleared,
-               a.id AS account_id, a.name AS account_name
+               a.id AS account_id, a.name AS account_name,
+               (SELECT COALESCE(SUM(ts.amount_cents), 0) FROM transaction_splits ts WHERE ts.idempotency_key = t.idempotency_key) AS splits_total
         FROM transactions t
         JOIN accounts a ON a.id = t.account_id
         WHERE {' AND '.join(where)}
@@ -108,6 +109,8 @@ def list_transactions(
                 "category_id": int(r["category_id"]) if r["category_id"] is not None else None,
                 "is_cleared": int(r["is_cleared"]) == 1,
                 "account": {"id": int(r["account_id"]), "name": r["account_name"]},
+                "splits_total_cents": int(r["splits_total"]),
+                "has_splits": int(r["splits_total"]) > 0,
             }
             for r in rows
         ],

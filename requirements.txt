@@ -6,4 +6,3 @@ pydantic-ai
 httpx
 jinja2
 python-multipart
-ynab-sdk

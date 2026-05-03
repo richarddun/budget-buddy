@@ -13,7 +13,6 @@ import sqlite3
 from pathlib import Path
 from typing import List
 import asyncio
-from ynab_sdk_client import YNABSdkClient as ynab
 import os
 import json
 import hmac
@@ -30,7 +29,6 @@ STAGING = os.getenv("STAGING", "false").lower() in ("1", "true", "yes")
 from config import BASE_PATH, CURRENCY_SYMBOL
 from jobs.daily_ingestion import scheduler_loop, run_daily_ingestion
 from jobs.nightly_snapshot import run_nightly_snapshot_async
-from jobs.backfill_payee_rules import backfill_from_ynab
 from forecast.calendar import Entry as FcEntry
 from datetime import date as _date
 from jobs.nightly_snapshot import _compute_digest as _compute_digest_from_snapshot
@@ -47,12 +45,6 @@ def check_api_keys():
             "Looks like you don't have a valid OpenAI API key.  Go to platform.openai.com "
             "and generate a new key, then add it to your .env file (in the root folder of the repository you cloned).  "
             "Please try again then."
-        )
-    if os.getenv("YNAB_TOKEN") is None:
-        logger.info("YNAB API token missing. Returning instructional message.")
-        return (
-            "It looks like you haven't added a YNAB API token to your .env file, I can't view your budget without it.  "
-            "Go to https://api.ynab.com/ and generate a token, and add to your .env file.  Please try again then."
         )
     return None
 # Import budget health analyzer
@@ -118,9 +110,19 @@ try:
 except Exception:
     calendar_export_router = None
 try:
+    from api.categories import router as categories_router
+except Exception:
+    categories_router = None
+
+try:
     from api.commitments import router as commitments_router
 except Exception:
     commitments_router = None
+
+try:
+    from api.splits import router as splits_router
+except Exception:
+    splits_router = None
 
 # Include API routers at import time for conventional startup
 if forecast_router is not None:
@@ -141,8 +143,22 @@ if accounts_router is not None:
     app.include_router(accounts_router)
 if transactions_router is not None:
     app.include_router(transactions_router)
+if categories_router is not None:
+    app.include_router(categories_router)
+
 if commitments_router is not None:
     app.include_router(commitments_router)
+
+try:
+    from api.recurring import router as recurring_router
+except Exception:
+    recurring_router = None
+
+if splits_router is not None:
+    app.include_router(splits_router)
+
+if recurring_router is not None:
+    app.include_router(recurring_router)
 
 # --- File upload Setup ---
 UPLOAD_DIR = Path("uploaded_receipts")
@@ -167,8 +183,6 @@ def init_db():
     ''')
     conn.commit()
     conn.close()
-
-BUDGET_ID = os.getenv("YNAB_BUDGET_ID")
 
 def store_message(prompt: str, response: str):
     # Ensure database and table exist
@@ -220,66 +234,29 @@ def _connect_localdb() -> sqlite3.Connection:
 
 
 def seed_staging_db():
-    """Populate localdb with dummy budget data when in STAGING mode."""
+    """Populate localdb with sample data when in STAGING mode.
+
+    No longer fetches from YNAB — inserts known sample transactions
+    to give the UI something to work with in development.
+    """
     if not STAGING:
         return
     try:
-        client = ynab()
-        budget_id = os.getenv("YNAB_BUDGET_ID") or "dummy-budget-id"
-        details = client.get_budget_details(budget_id)
-        txns = client.get_transactions(budget_id)
-
         with _connect_localdb() as conn:
-            # Insert accounts and capture internal IDs
-            acct_map = {}
-            for acct in details.get("accounts", []):
+            # Ensure default accounts exist
+            for acct_name, acct_type in [("Checking", "checking"), ("Savings", "savings")]:
                 cur = conn.execute(
-                    "SELECT id FROM accounts WHERE name = ?",
-                    (acct.get("name"),),
+                    "SELECT id FROM accounts WHERE name = ?", (acct_name,)
                 )
-                row = cur.fetchone()
-                if row:
-                    acct_map[acct.get("id")] = int(row[0])
-                else:
-                    cur = conn.execute(
+                if not cur.fetchone():
+                    conn.execute(
                         "INSERT INTO accounts(name, type, currency, is_active) VALUES (?,?,?,1)",
-                        (
-                            acct.get("name"),
-                            acct.get("type", "checking"),
-                            details.get("currency_format", {}).get("iso_code", "USD"),
-                        ),
+                        (acct_name, acct_type, "EUR"),
                     )
-                    acct_map[acct.get("id")] = int(cur.lastrowid)
-
-            # Insert transactions
-            for txn in txns:
-                internal_id = acct_map.get(txn.get("account_id"))
-                if not internal_id:
-                    continue
-                amount_cents = int(round(txn.get("amount", 0) * 100))
-                conn.execute(
-                    """
-                    INSERT OR IGNORE INTO transactions(
-                        idempotency_key, account_id, posted_at, amount_cents, payee, memo,
-                        external_id, source, is_cleared
-                    ) VALUES (?,?,?,?,?,?,?,?,?)
-                    """,
-                    (
-                        txn.get("id"),
-                        internal_id,
-                        txn.get("date"),
-                        amount_cents,
-                        txn.get("payee_name"),
-                        txn.get("memo"),
-                        txn.get("id"),
-                        "staging",
-                        1,
-                    ),
-                )
             conn.commit()
-        logger.info("[STAGING] Seeded localdb with dummy budget data")
+        logger.info("[STAGING] Ensured default accounts exist in localdb")
     except Exception as e:
-        logger.exception(f"[STAGING] Failed to seed database: {e}")
+        logger.exception(f"[STAGING] Failed to seed default data: {e}")
 
 def load_latest_snapshot_row():
     try:
@@ -551,6 +528,14 @@ async def transactions_browser(request: Request):
     csrf_token = os.getenv("CSRF_TOKEN") or None
     return templates.TemplateResponse("transactions.html", {"request": request, "csrf_token": csrf_token, "currency_symbol": CURRENCY_SYMBOL})
 
+@app.get("/categories", response_class=HTMLResponse)
+async def categories_page(request: Request):
+    _require_session_dep(request)
+    """Full category management page with hierarchy tree, add/edit, archive."""
+    csrf_token = os.getenv("CSRF_TOKEN") or None
+    return templates.TemplateResponse("categories.html", {"request": request, "csrf_token": csrf_token, "currency_symbol": CURRENCY_SYMBOL})
+
+
 @app.get("/commitments", response_class=HTMLResponse)
 async def commitments_page(request: Request):
     _require_session_dep(request)
@@ -558,51 +543,34 @@ async def commitments_page(request: Request):
     csrf_token = os.getenv("CSRF_TOKEN") or None
     return templates.TemplateResponse("commitments.html", {"request": request, "csrf_token": csrf_token, "currency_symbol": CURRENCY_SYMBOL})
 
-@app.get("/budgets")
-def get_budget():
-    buddy = ynab()
-    return buddy.get_budget_details(BUDGET_ID)
 
-@app.post("/local/backfill-payee-rules")
-async def backfill_payee_rules_endpoint(
-    request: Request,
-    months: int = 12,
-    min_occurrences: int = 2,
-    generalize: bool = True,
-    dry_run: bool = False,
-):
-    # Admin-protect and rate-limit this local/admin endpoint
-    _require_auth_dep(request)
-    _require_csrf_dep(request)
-    _rate_limit_dep(request, scope="admin-local-backfill")
-    if not BUDGET_ID:
-        return {"error": "YNAB_BUDGET_ID not configured"}
-    try:
-        summary = backfill_from_ynab(
-            budget_id=BUDGET_ID,
-            months=months,
-            min_occurrences=min_occurrences,
-            generalize=generalize,
-            dry_run=dry_run,
-        )
-        return summary
-    except Exception as e:
-        logger.exception(f"Backfill failed: {e}")
-        return {"error": str(e)}
+@app.get("/recurring", response_class=HTMLResponse)
+async def recurring_page(request: Request):
+    _require_session_dep(request)
+    """Manage recurring transaction templates."""
+    csrf_token = os.getenv("CSRF_TOKEN") or None
+    return templates.TemplateResponse("recurring.html", {"request": request, "csrf_token": csrf_token, "currency_symbol": CURRENCY_SYMBOL})
 
+
+@app.get("/transactions/{idempotency_key}/splits", response_class=HTMLResponse)
+async def transaction_splits_page(request: Request, idempotency_key: str):
+    _require_session_dep(request)
+    """Transaction split management page."""
+    csrf_token = os.getenv("CSRF_TOKEN") or None
+    return templates.TemplateResponse("transaction_splits.html", {"request": request, "csrf_token": csrf_token, "currency_symbol": CURRENCY_SYMBOL, "idempotency_key": idempotency_key})
 
 @app.post("/local/sync-transactions-now")
 async def sync_transactions_now(request: Request):
-    """Run an immediate transaction sync (bypassing cache), then snapshot.
+    """Run a local freshness check and snapshot.
 
-    Admin + CSRF protected. Returns summary JSON with fetched count.
+    Admin + CSRF protected. Returns summary JSON.
     """
     _require_auth_dep(request)
     _require_csrf_dep(request)
     _rate_limit_dep(request, scope="admin-local-sync-now")
     try:
         summary = await run_daily_ingestion()
-        # After ingestion, refresh snapshot so UI has current balances
+        # Refresh snapshot so UI has current balances
         try:
             await run_nightly_snapshot_async()
         except Exception as e:
@@ -612,28 +580,12 @@ async def sync_transactions_now(request: Request):
         logger.exception(f"[SYNC NOW] Ingestion failed: {e}")
         return {"status": "error", "reason": str(e)}
 
-
-@app.post("/local/purge-ynab-cache")
-async def purge_ynab_cache(request: Request):
-    """Purge the on-disk YNAB client cache (.ynab_cache). Admin + CSRF required."""
-    _require_auth_dep(request)
-    _require_csrf_dep(request)
-    _rate_limit_dep(request, scope="admin-local-cache")
-    try:
-        from ynab_sdk_client import YNABSdkClient
-
-        YNABSdkClient().clear_cache()
-        return {"status": "ok"}
-    except Exception as e:
-        logger.exception(f"[CACHE PURGE] Failed: {e}")
-        return {"status": "error", "reason": str(e)}
-
 @app.get("/budget-health", response_class=HTMLResponse)
 async def get_budget_health(request: Request):
     _require_session_dep(request)
     """Generate budget health report via Jinja template"""
     try:
-        analyzer = BudgetHealthAnalyzer(BUDGET_ID)
+        analyzer = BudgetHealthAnalyzer()
         html_report = analyzer.generate_html_report()
         # Conditionally expose CSRF token to the template when configured
         csrf_token = os.getenv("CSRF_TOKEN") or None
@@ -653,7 +605,7 @@ async def get_budget_health(request: Request):
 async def debug_budget_health():
     """Debug budget health analysis step by step"""
     try:
-        analyzer = BudgetHealthAnalyzer(BUDGET_ID)
+        analyzer = BudgetHealthAnalyzer()
 
         result = {"step": "starting"}
 
@@ -722,7 +674,7 @@ async def get_subscriptions(filter_view: str = "all"):
     """Detect subscriptions and scheduled payments (JSON response)"""
     import json
     try:
-        analyzer = BudgetHealthAnalyzer(BUDGET_ID)
+        analyzer = BudgetHealthAnalyzer()
         analyzer._load_data()  # Load data first
         all_subscriptions = analyzer.detect_subscriptions_and_scheduled_payments()
 
@@ -799,7 +751,7 @@ async def get_subscriptions_rest_of_month_report(request: Request):
 async def get_subscriptions_report(request: Request, filter_view: str = "all"):
     """Generate subscriptions report as HTML with filtering options"""
     try:
-        analyzer = BudgetHealthAnalyzer(BUDGET_ID)
+        analyzer = BudgetHealthAnalyzer()
         analyzer._load_data()  # Load data first
         all_subscriptions = analyzer.detect_subscriptions_and_scheduled_payments()
 
@@ -851,7 +803,7 @@ async def get_subscriptions_report(request: Request, filter_view: str = "all"):
 async def test_subscriptions():
     """Test route to verify subscription detection and JSON serialization"""
     try:
-        analyzer = BudgetHealthAnalyzer(BUDGET_ID)
+        analyzer = BudgetHealthAnalyzer()
         result = analyzer.test_subscription_detection()
         return result
     except Exception as e:
@@ -864,7 +816,7 @@ async def debug_subscriptions():
     import json
     #pdb.set_trace()
     try:
-        analyzer = BudgetHealthAnalyzer(BUDGET_ID)
+        analyzer = BudgetHealthAnalyzer()
 
         # Test 1: Can we create the analyzer?
         result = {"step_1_analyzer_created": True}
@@ -909,7 +861,7 @@ async def get_simple_subscriptions():
     from collections import defaultdict
 
     try:
-        analyzer = BudgetHealthAnalyzer(BUDGET_ID)
+        analyzer = BudgetHealthAnalyzer()
         analyzer._load_data()
 
         if not analyzer._transaction_data:

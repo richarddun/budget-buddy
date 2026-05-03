@@ -63,11 +63,56 @@ def _verify_session_cookie(value: str, secret: str) -> bool:
         return False
 
 
+def _is_lan_request(request: Request) -> bool:
+    """Check if the request originates from a private LAN IP range.
+
+    Returns True for:
+      - 192.168.x.x
+      - 10.x.x.x
+      - 172.16-31.x.x
+      - 127.x.x.x (localhost)
+    """
+    host = request.client.host if request.client else None
+    if not host:
+        return False
+    # Check for private IPv4 ranges
+    if host.startswith("192.168."):
+        return True
+    if host.startswith("10."):
+        return True
+    if host.startswith("127."):
+        return True
+    if host.startswith("172."):
+        try:
+            second = int(host.split(".")[1])
+            if 16 <= second <= 31:
+                return True
+        except (ValueError, IndexError):
+            pass
+    # Also treat proxied requests with X-Forwarded-For as LAN-respectful
+    forwarded = request.headers.get("x-forwarded-for")
+    if forwarded:
+        first_ip = forwarded.split(",")[0].strip()
+        if first_ip.startswith(("192.168.", "10.", "127.")):
+            return True
+        if first_ip.startswith("172."):
+            try:
+                second = int(first_ip.split(".")[1])
+                if 16 <= second <= 31:
+                    return True
+            except (ValueError, IndexError):
+                pass
+    return False
+
+
 def is_session_valid(request: Request) -> bool:
     """Check if the request has a valid session cookie."""
     secret = _session_secret()
     if not secret:
         # No PIN configured — no auth required (dev mode)
+        return True
+    # Auto-bypass PIN for LAN requests (PIN-less access)
+    if _is_lan_request(request):
         return True
     cookie = request.cookies.get(_SESSION_COOKIE)
     if not cookie:

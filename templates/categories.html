@@ -1,0 +1,426 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Categories</title>
+    {% if csrf_token %}<meta name="csrf-token" content="{{ csrf_token }}">{% endif %}
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <style>
+      body { margin:0; font-family: system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, 'Helvetica Neue', Arial; background:#0f172a; color:#e5e7eb; }
+      .container { max-width: 1100px; margin: 0 auto; padding: 20px; }
+      .header { display:flex; justify-content:space-between; align-items:center; margin-bottom: 12px; }
+      .back { display:inline-block; padding:8px 12px; border-radius:6px; background:#3b82f6; color:#06142b; text-decoration:none; font-weight:600; }
+      .panel { background:#111827; border-radius:10px; padding:16px; margin-bottom:16px; border:1px solid #1f2937; }
+      .section-title { font-size:16px; font-weight:700; margin:0 0 10px 0; }
+      table { width:100%; border-collapse: collapse; }
+      th, td { border-bottom:1px solid #1f2937; padding:8px; text-align:left; }
+      input, select { background:#0b1222; color:#e5e7eb; border:1px solid #374151; border-radius:6px; padding:6px 8px; }
+      button { background:#2563eb; color:#fff; border:none; border-radius:6px; padding:8px 12px; cursor:pointer; }
+      .muted { color:#9ca3af; font-size:12px; }
+      .row-actions { display:flex; gap:8px; align-items:center; }
+      .ok { color:#86efac; }
+      .err { color:#fecaca; }
+      .archived { opacity:0.5; text-decoration:line-through; }
+      .tree-indent { display:inline-block; width:20px; }
+      .badge { display:inline-block; background:#374151; border-radius:10px; padding:0 6px; font-size:11px; color:#9ca3af; margin-left:4px; }
+      .hierarchy-toggle { cursor:pointer; user-select:none; margin-right:4px; }
+      .hierarchy-toggle::before { content:'▶'; display:inline-block; transition:transform .15s; color:#6b7280; }
+      .hierarchy-toggle.expanded::before { transform:rotate(90deg); }
+      .nested { display:none; }
+      .nested.expanded { display:block; }
+      .tree-row { display:flex; align-items:center; gap:8px; padding:6px 0; }
+      .tree-row:hover { background:#1f2937; border-radius:4px; }
+      .inline-edit { display:flex; gap:4px; align-items:center; }
+      .inline-edit input { max-width:200px; }
+      .inline-edit select { max-width:200px; }
+      .btn-sm { padding:4px 8px; font-size:12px; }
+      .btn-danger { background:#dc2626; }
+      .btn-success { background:#16a34a; }
+      .modal-overlay { position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.6); display:flex; align-items:center; justify-content:center; z-index:1000; }
+      .modal { background:#111827; border:1px solid #374151; border-radius:12px; padding:24px; min-width:400px; max-width:500px; }
+      .modal h2 { margin:0 0 16px 0; }
+      .modal-actions { display:flex; gap:8px; justify-content:flex-end; margin-top:16px; }
+      .btn-secondary { background:#374151; }
+      .btn-cancel { background:#6b7280; }
+    </style>
+  </head>
+  <body>
+    <script>window.APP_BASE = '{{ request.url_for("index") }}'.replace(/\/$/, '');</script>
+    <script src="{{ request.url_for('static', path='sidebar.js') }}"></script>
+    <div class="container">
+      <div class="header">
+        <h1 style="margin:0">📂 Category Management</h1>
+        <div style="display:flex; gap:8px">
+          <button id="btn-add-root" type="button" style="background:#16a34a">+ Add Root Category</button>
+          <a class="back" href="{{ request.url_for('index') }}">← Back to Chat</a>
+        </div>
+      </div>
+
+      <!-- Category Tree Panel -->
+      <div class="panel">
+        <div class="section-title">
+          Category Hierarchy
+          <label style="font-weight:400; font-size:13px; margin-left:12px">
+            <input type="checkbox" id="chk-archived"> Show archived
+          </label>
+        </div>
+        <div class="muted" style="margin-bottom:8px">
+          Click <strong>✎</strong> to rename. Drag <strong>parent</strong> field to reorganise. Archive instead of delete.
+        </div>
+        <div id="tree-container">
+          <div id="tree-status" class="muted">Loading...</div>
+        </div>
+      </div>
+
+      <!-- Flat list (for reference) -->
+      <div class="panel">
+        <div class="section-title">
+          All Categories (Flat View)
+          <button id="btn-refresh" type="button" class="btn-sm" style="margin-left:8px">⟳ Refresh</button>
+        </div>
+        <div style="overflow:auto">
+          <table id="tbl-categories">
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>Name</th>
+                <th>Parent</th>
+                <th>Children</th>
+                <th>Transactions</th>
+                <th>Source</th>
+                <th>Status</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- Modal for add/edit -->
+    <div id="modal-overlay" class="modal-overlay" style="display:none">
+      <div class="modal">
+        <h2 id="modal-title">Edit Category</h2>
+        <div style="display:flex; flex-direction:column; gap:12px">
+          <label>Name
+            <input id="modal-name" type="text" style="width:100%; box-sizing:border-box; margin-top:4px">
+          </label>
+          <label>Parent Category
+            <select id="modal-parent" style="width:100%; box-sizing:border-box; margin-top:4px">
+              <option value="">— None (root category) —</option>
+            </select>
+          </label>
+          <div class="muted" id="modal-info"></div>
+        </div>
+        <div class="modal-actions">
+          <button id="modal-cancel" type="button" class="btn-cancel">Cancel</button>
+          <button id="modal-save" type="button" class="btn-success">Save</button>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      // ─── Globals ─────────────────────────────────────────────────
+      const CSRF = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content');
+      function csrfHeader() { return CSRF ? { 'X-CSRF-Token': CSRF } : {}; }
+      function adminHeader() {
+        try { const tok = localStorage.getItem('adminToken') || localStorage.getItem('admin_token'); return tok ? { 'X-Admin-Token': tok } : {}; } catch { return {}; }
+      }
+      const BASE = window.APP_BASE || '';
+
+      async function fetchJSON(u) { const r = await fetch(u); if (!r.ok) throw new Error('HTTP ' + r.status + ': ' + await r.text().catch(()=>'')); return r.json(); }
+
+      function fmtCents(c) { const s = c<0?'-':''; const a=Math.abs(c); return s + ({{ currency_symbol|tojson|safe }} || '€') + (a/100).toFixed(2); }
+
+      // ─── Tree rendering ─────────────────────────────────────────
+      function renderTree(tree) {
+        const container = document.getElementById('tree-container');
+        // Remove status, render tree
+        const status = document.getElementById('tree-status');
+        if (status) status.remove();
+
+        // Clear existing content (except status)
+        const existing = container.querySelector('.tree-content');
+        if (existing) existing.remove();
+
+        const wrapper = document.createElement('div');
+        wrapper.className = 'tree-content';
+
+        if (!tree || tree.length === 0) {
+          wrapper.innerHTML = '<div class="muted">No categories yet. Add one above.</div>';
+          container.appendChild(wrapper);
+          return;
+        }
+
+        function buildBranch(nodes, depth) {
+          const ul = document.createElement('ul');
+          ul.style.cssText = 'list-style:none;padding:0;margin:0';
+          nodes.forEach(node => {
+            const li = document.createElement('li');
+            li.style.paddingLeft = (depth * 20) + 'px';
+
+            const row = document.createElement('div');
+            row.className = 'tree-row';
+            if (node.is_archived) row.classList.add('archived');
+
+            // Expand/collapse toggle for nodes with children
+            const hasChildren = node.children && node.children.length > 0;
+            const toggle = document.createElement('span');
+            toggle.className = 'hierarchy-toggle';
+            if (!hasChildren) toggle.style.visibility = 'hidden';
+            else toggle.addEventListener('click', () => {
+              toggle.classList.toggle('expanded');
+              const nested = li.querySelector('.nested');
+              if (nested) nested.classList.toggle('expanded');
+            });
+
+            // Name
+            const nameSpan = document.createElement('span');
+            nameSpan.textContent = node.name;
+            nameSpan.style.fontWeight = depth === 0 ? '600' : '400';
+            if (node.source === 'ynab') nameSpan.style.color = '#93c5fd';
+
+            // Badges
+            const badges = document.createElement('span');
+            if (node.children_count > 0) {
+              const b = document.createElement('span');
+              b.className = 'badge';
+              b.textContent = `${node.children_count} sub`;
+              badges.appendChild(b);
+            }
+            if (node.transaction_count > 0) {
+              const b = document.createElement('span');
+              b.className = 'badge';
+              b.textContent = `${node.transaction_count} txns`;
+              badges.appendChild(b);
+            }
+            if (node.source) {
+              const b = document.createElement('span');
+              b.className = 'badge';
+              b.textContent = node.source;
+              badges.appendChild(b);
+            }
+            if (node.is_archived) {
+              const b = document.createElement('span');
+              b.className = 'badge';
+              b.textContent = 'archived';
+              b.style.color = '#fca5a5';
+              badges.appendChild(b);
+            }
+
+            // Actions
+            const actions = document.createElement('span');
+            actions.className = 'row-actions';
+            actions.style.marginLeft = 'auto';
+
+            const editBtn = document.createElement('button');
+            editBtn.className = 'btn-sm';
+            editBtn.textContent = '✎';
+            editBtn.title = 'Edit name / parent';
+            editBtn.addEventListener('click', (e) => { e.stopPropagation(); openEditModal(node.id, node.name, node.parent_id); });
+
+            const archiveBtn = document.createElement('button');
+            archiveBtn.className = 'btn-sm btn-danger';
+            archiveBtn.textContent = node.is_archived ? '↗ Unarchive' : '✕ Archive';
+            archiveBtn.title = node.is_archived ? 'Restore this category' : 'Archive this category';
+            archiveBtn.addEventListener('click', (e) => { e.stopPropagation(); handleArchive(node.id, !node.is_archived); });
+
+            actions.appendChild(editBtn);
+            actions.appendChild(archiveBtn);
+
+            row.appendChild(toggle);
+            row.appendChild(nameSpan);
+            row.appendChild(badges);
+            row.appendChild(actions);
+            li.appendChild(row);
+
+            // Children
+            if (hasChildren) {
+              const nested = document.createElement('div');
+              nested.className = 'nested';
+              const childBranch = buildBranch(node.children, depth + 1);
+              nested.appendChild(childBranch);
+              li.appendChild(nested);
+            }
+
+            ul.appendChild(li);
+          });
+          return ul;
+        }
+
+        wrapper.appendChild(buildBranch(tree, 0));
+        container.appendChild(wrapper);
+      }
+
+      // ─── Flat table rendering ──────────────────────────────────
+      function renderFlat(items) {
+        const tbody = document.querySelector('#tbl-categories tbody');
+        tbody.innerHTML = '';
+        if (!items || items.length === 0) {
+          tbody.innerHTML = '<tr><td colspan="8" class="muted">No categories</td></tr>';
+          return;
+        }
+        for (const it of items) {
+          const tr = document.createElement('tr');
+          if (it.is_archived) tr.style.opacity = '0.5';
+          tr.innerHTML = `
+            <td>${it.id}</td>
+            <td>${(it.name||'').replace(/</g,'&lt;')}</td>
+            <td>${it.parent_name ? (it.parent_name).replace(/</g,'&lt;') : '—'}</td>
+            <td>${it.children_count}</td>
+            <td>${it.transaction_count}</td>
+            <td>${it.source || 'internal'}</td>
+            <td>${it.is_archived ? '<span style="color:#fca5a5">archived</span>' : '✔ active'}</td>
+            <td class="row-actions">
+              <button class="btn-sm" data-action="edit" data-id="${it.id}">✎</button>
+              <button class="btn-sm ${it.is_archived ? 'btn-success' : 'btn-danger'}" data-action="archive" data-id="${it.id}">${it.is_archived ? '↗' : '✕'}</button>
+            </td>
+          `;
+          tbody.appendChild(tr);
+        }
+      }
+
+      // ─── Load data ──────────────────────────────────────────────
+      async function loadData() {
+        const showArchived = document.getElementById('chk-archived').checked;
+        const archParam = showArchived ? 'true' : 'false';
+        try {
+          const [treeData, flatData] = await Promise.all([
+            fetchJSON(`${BASE}/api/categories?archived=${archParam}`),
+            fetchJSON(`${BASE}/api/categories?archived=${archParam}&flat=true`),
+          ]);
+          renderTree(treeData.tree || []);
+          renderFlat(flatData.items || []);
+        } catch (e) {
+          document.getElementById('tree-status').textContent = 'Failed to load categories: ' + e.message;
+        }
+      }
+
+      // ─── Actions ────────────────────────────────────────────────
+      function openEditModal(id, name, parentId) {
+        const overlay = document.getElementById('modal-overlay');
+        document.getElementById('modal-title').textContent = id ? 'Edit Category' : 'Add Category';
+        document.getElementById('modal-name').value = name || '';
+        document.getElementById('modal-info').textContent = id ? `Category ID: ${id}` : '';
+        overlay.style.display = 'flex';
+
+        // Populate parent dropdown
+        const sel = document.getElementById('modal-parent');
+        sel.innerHTML = '<option value="">— None (root category) —</option>';
+        fetchJSON(`${BASE}/api/categories?flat=true`)
+          .then(j => {
+            (j.items||[]).forEach(cat => {
+              // Exclude self and children from parent options (basic filter)
+              if (id && String(cat.id) === String(id)) return;
+              const opt = document.createElement('option');
+              opt.value = String(cat.id);
+              opt.textContent = cat.name + (cat.is_archived ? ' (archived)' : '');
+              if (cat.parent_name) opt.textContent += ` [under ${cat.parent_name}]`;
+              if (id && String(cat.parent_id) === String(parentId)) opt.selected = true;
+              sel.appendChild(opt);
+            });
+            if (parentId) sel.value = String(parentId);
+          })
+          .catch(() => {});
+
+        // Store target id for save
+        overlay.dataset.targetId = id ? String(id) : '';
+      }
+
+      async function handleSave() {
+        const overlay = document.getElementById('modal-overlay');
+        const id = overlay.dataset.targetId || null;
+        const name = document.getElementById('modal-name').value.trim();
+        const parentVal = document.getElementById('modal-parent').value;
+        const parentId = parentVal ? parseInt(parentVal) : null;
+
+        if (!name) { alert('Name is required'); return; }
+
+        const body = { name, parent_id: parentId };
+
+        try {
+          let url = `${BASE}/api/categories`;
+          let method = 'POST';
+          if (id) { url += '/' + encodeURIComponent(id); method = 'PUT'; }
+
+          const r = await fetch(url, {
+            method,
+            headers: { 'Content-Type': 'application/json', ...csrfHeader(), ...adminHeader() },
+            body: JSON.stringify(body),
+          });
+          if (!r.ok) { const j = await r.json().catch(()=>({})); throw new Error(j.detail || 'Error'); }
+          overlay.style.display = 'none';
+          await loadData();
+        } catch (e) {
+          alert('Failed: ' + e.message);
+        }
+      }
+
+      async function handleArchive(categoryId, archive) {
+        if (archive) {
+          if (!confirm('Archive this category and all its sub-categories?')) return;
+        }
+        try {
+          if (archive) {
+            const r = await fetch(`${BASE}/api/categories/${encodeURIComponent(categoryId)}`, {
+              method: 'DELETE',
+              headers: { ...csrfHeader(), ...adminHeader() },
+            });
+            if (!r.ok) { const j = await r.json().catch(()=>({})); throw new Error(j.detail || 'Error'); }
+          } else {
+            // Unarchive — set is_archived = 0
+            const r = await fetch(`${BASE}/api/categories/${encodeURIComponent(categoryId)}`, {
+              method: 'PUT',
+              headers: { 'Content-Type': 'application/json', ...csrfHeader(), ...adminHeader() },
+              body: JSON.stringify({ is_archived: false }),
+            });
+            if (!r.ok) { const j = await r.json().catch(()=>({})); throw new Error(j.detail || 'Error'); }
+          }
+          await loadData();
+        } catch (e) {
+          alert('Failed: ' + e.message);
+        }
+      }
+
+      // ─── Event wiring ──────────────────────────────────────────
+      document.addEventListener('DOMContentLoaded', loadData);
+
+      document.getElementById('chk-archived').addEventListener('change', loadData);
+      document.getElementById('btn-refresh').addEventListener('click', loadData);
+
+      document.getElementById('btn-add-root').addEventListener('click', () => {
+        openEditModal(null, null, null);
+      });
+
+      document.getElementById('modal-cancel').addEventListener('click', () => {
+        document.getElementById('modal-overlay').style.display = 'none';
+      });
+      document.getElementById('modal-save').addEventListener('click', handleSave);
+
+      // Click outside modal to close
+      document.getElementById('modal-overlay').addEventListener('click', (e) => {
+        if (e.target === e.currentTarget) e.currentTarget.style.display = 'none';
+      });
+
+      // Delegate clicks on table action buttons
+      document.querySelector('#tbl-categories tbody').addEventListener('click', async (e) => {
+        const btn = e.target.closest('button');
+        if (!btn) return;
+        const action = btn.getAttribute('data-action');
+        const id = btn.getAttribute('data-id');
+        if (!id) return;
+        if (action === 'edit') {
+          try {
+            const j = await fetchJSON(`${BASE}/api/categories/${encodeURIComponent(id)}`);
+            openEditModal(j.id, j.name, j.parent_id);
+          } catch (e) {
+            alert('Failed to load category: ' + e.message);
+          }
+        } else if (action === 'archive') {
+          handleArchive(parseInt(id), true);
+        }
+      });
+    </script>
+  </body>
+</html>

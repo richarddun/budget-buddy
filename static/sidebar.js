@@ -7,6 +7,8 @@
       { href: BASE + '/overview', label: '📋 Overview' },
       { href: BASE + '/budget-health', label: '📊 Budget Health' },
       { href: BASE + '/transactions', label: '🧾 Transactions' },
+      { href: BASE + '/transactions?has_splits=1', label: '🔀 Splits' },
+      { href: BASE + '/categories', label: '📂 Categories' },
       { href: BASE + '/commitments', label: '📑 Commitments' },
       { href: BASE + '/subscriptions-report', label: '🔄 Subscriptions' },
       { href: BASE + '/subscriptions-rest-of-month-report', label: '📅 Subs (Rest of Month)' },
