@@ -16,6 +16,7 @@
       { href: BASE + '/subscriptions-report', label: '🔄 Subscriptions' },
       { href: BASE + '/subscriptions-rest-of-month-report', label: '📅 Subs (Rest of Month)' },
       { href: BASE + '/uploads', label: '🗂️ Uploads' },
+      { href: BASE + '/api/csv-import/upload-page', label: '📥 CSV Import' },
       { href: BASE + '/unmatched', label: '❓ Unmatched' },
       { href: BASE + '/admin', label: '⚙️ Admin' },
     ];

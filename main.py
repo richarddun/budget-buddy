@@ -492,14 +492,14 @@ async def login_submit(request: Request, pin: str = Form(...), remember: str | N
     expected = os.getenv("APP_ACCESS_PIN")
     if not expected:
         # No PIN configured — auto-login (dev mode)
-        home = str(request.base_url).rstrip("/")
+        home = str(request.base_url)
         return RedirectResponse(url=home, status_code=303)
     if not hmac.compare_digest(pin.encode(), expected.encode()):
         return await login_page(request, error="Invalid PIN. Please try again.")
     # Build signed session cookie
     remember_bool = remember == "yes"
     name, value, max_age = _build_session_cookie(remember_bool)
-    home = str(request.base_url).rstrip("/")
+    home = str(request.base_url)
     resp = RedirectResponse(url=home, status_code=303)
     resp.set_cookie(
         key=name,
@@ -556,7 +556,8 @@ async def transaction_new(request: Request):
     _require_session_dep(request)
     """Quick-add a single transaction via a dedicated form page."""
     csrf_token = os.getenv("CSRF_TOKEN") or None
-    return templates.TemplateResponse(request, "transaction_new.html", {"csrf_token": csrf_token, "currency_symbol": "€"})
+    admin_token = os.getenv("ADMIN_TOKEN") or None
+    return templates.TemplateResponse(request, "transaction_new.html", {"csrf_token": csrf_token, "admin_token": admin_token, "currency_symbol": "€"})
 
 @app.get("/categories", response_class=HTMLResponse)
 async def categories_page(request: Request):

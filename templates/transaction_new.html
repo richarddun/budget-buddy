@@ -7,6 +7,9 @@
     {% if csrf_token %}
     <meta name="csrf-token" content="{{ csrf_token }}">
     {% endif %}
+    {% if admin_token %}
+    <meta name="admin-token" content="{{ admin_token }}">
+    {% endif %}
     <style>
       :root {
         --bg: #0f172a; --panel: #111827; --card: #1f2937;
@@ -127,6 +130,8 @@
         const base = window.APP_BASE || '';
         const csrfMeta = document.querySelector('meta[name="csrf-token"]');
         const csrfToken = csrfMeta ? csrfMeta.getAttribute('content') : '';
+        const adminMeta = document.querySelector('meta[name="admin-token"]');
+        const adminToken = adminMeta ? adminMeta.getAttribute('content') : '';
 
         function qs(s) { return document.querySelector(s); }
 
@@ -264,6 +269,7 @@
               headers: {
                 'Content-Type': 'application/json',
                 'X-CSRF-Token': csrfToken,
+                'X-Admin-Token': adminToken,
               },
               body: JSON.stringify(payload),
             });

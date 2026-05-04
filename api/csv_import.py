@@ -96,6 +96,7 @@ async def csv_import_page(request: Request):
     ]
 
     return _templates.TemplateResponse(
+        request,
         "csv_import.html",
         {
             "request": request,

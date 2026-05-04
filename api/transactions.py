@@ -79,7 +79,7 @@ def list_transactions(
         SELECT t.idempotency_key, t.posted_at, t.amount_cents, t.payee, t.memo,
                t.source, t.category_id, t.is_cleared,
                a.id AS account_id, a.name AS account_name,
-               (SELECT COALESCE(SUM(ts.amount_cents), 0) FROM transaction_splits ts WHERE ts.idempotency_key = t.idempotency_key) AS splits_total
+               (SELECT COALESCE(SUM(ts.amount_cents), 0) FROM transaction_splits ts WHERE ts.transaction_idempotency_key = t.idempotency_key) AS splits_total
         FROM transactions t
         JOIN accounts a ON a.id = t.account_id
         WHERE {' AND '.join(where)}
