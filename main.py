@@ -567,6 +567,108 @@ async def categories_page(request: Request):
     return templates.TemplateResponse(request, "categories.html", {"csrf_token": csrf_token, "currency_symbol": CURRENCY_SYMBOL})
 
 
+@app.post("/api/commitments/generate-from-subscriptions")
+async def generate_commitments_from_subscriptions(request: Request):
+    """Generate commitment rows from detected subscriptions.
+
+    Idempotent — skips payees that already have a commitment row (matched by name).
+    Only imports subscriptions with confidence_score >= 70.
+    Estimates next_due_date from last_seen + avg_interval_days.
+    """
+    try:
+        analyzer = BudgetHealthAnalyzer(db_path=str(SOT_DB_PATH))
+        all_subscriptions = analyzer.detect_subscriptions_and_scheduled_payments()
+
+        # Filter for confident subscriptions only
+        candidates = [
+            s for s in all_subscriptions
+            if (s.get("confidence_score") or 0) >= 70
+            and (s.get("subscription_type") or "") in (
+                "Monthly Subscription", "Scheduled Payment", "Quarterly Payment"
+            )
+        ]
+
+        conn = sqlite3.connect(str(SOT_DB_PATH))
+        conn.row_factory = sqlite3.Row
+        created = 0
+        skipped = 0
+
+        for sub in candidates:
+            payee_name = (sub.get("payee_name") or "").strip()
+            if not payee_name:
+                continue
+
+            # Check if this payee already has a commitment
+            existing = conn.execute(
+                "SELECT id FROM commitments WHERE name = ?", (payee_name,)
+            ).fetchone()
+            if existing:
+                skipped += 1
+                continue
+
+            avg_amount = sub.get("avg_amount") or 0
+            amount_cents = int(round(float(avg_amount) * 100))
+            sub_type = sub.get("subscription_type") or "Scheduled Payment"
+
+            # Map subscription_type -> due_rule
+            due_rule_map = {
+                "Monthly Subscription": "MONTHLY",
+                "Scheduled Payment": "MONTHLY",
+                "Quarterly Payment": "QUARTERLY",
+                "Weekly Service": "WEEKLY",
+            }
+            due_rule = due_rule_map.get(sub_type, "MONTHLY")
+
+            # Estimate next_due_date
+            last_seen_str = sub.get("last_seen") or ""
+            avg_interval = float(sub.get("avg_interval_days") or 30)
+            next_due_date = None
+            try:
+                if last_seen_str:
+                    from datetime import timedelta
+                    last_date = datetime.fromisoformat(
+                        last_seen_str.replace("Z", "+00:00")
+                    ).date()
+                    next_date = last_date + timedelta(days=int(round(avg_interval)))
+                    next_due_date = next_date.isoformat()
+            except Exception:
+                pass
+
+            # Get default account
+            acct_row = conn.execute(
+                "SELECT id FROM accounts WHERE is_active = 1 AND currency = 'EUR' LIMIT 1"
+            ).fetchone()
+            account_id = int(acct_row["id"]) if acct_row else 1
+
+            conn.execute(
+                """INSERT INTO commitments(name, amount_cents, due_rule, next_due_date,
+                   priority, account_id, flexible_window_days, type)
+                   VALUES(?, ?, ?, ?, 1, ?, 4, ?)""",
+                (
+                    payee_name,
+                    amount_cents,
+                    due_rule,
+                    next_due_date,
+                    account_id,
+                    "bill",
+                ),
+            )
+            created += 1
+
+        conn.commit()
+        conn.close()
+
+        return {
+            "status": "ok",
+            "created": created,
+            "skipped": skipped,
+            "candidates_considered": len(candidates),
+        }
+    except Exception as exc:
+        logger.exception("generate-from-subscriptions failed")
+        return {"status": "error", "reason": str(exc)}
+
+
 @app.get("/commitments", response_class=HTMLResponse)
 async def commitments_page(request: Request):
     _require_session_dep(request)
@@ -588,7 +690,7 @@ async def budget_targets_page(request: Request):
     _require_session_dep(request)
     """Monthly budget targets / envelope system with progress bars and warnings."""
     csrf_token = os.getenv("CSRF_TOKEN") or None
-    return templates.TemplateResponse("budget_targets.html", {"request": request, "csrf_token": csrf_token, "currency_symbol": CURRENCY_SYMBOL})
+    return templates.TemplateResponse(request, "budget_targets.html", {"csrf_token": csrf_token, "currency_symbol": CURRENCY_SYMBOL})
 
 
 @app.get("/spending-reports", response_class=HTMLResponse)
@@ -596,7 +698,7 @@ async def spending_reports_page(request: Request):
     _require_session_dep(request)
     """Spending reports dashboard with charts and breakdowns."""
     csrf_token = os.getenv("CSRF_TOKEN") or None
-    return templates.TemplateResponse("spending_reports.html", {"request": request, "csrf_token": csrf_token, "currency_symbol": CURRENCY_SYMBOL})
+    return templates.TemplateResponse(request, "spending_reports.html", {"csrf_token": csrf_token, "currency_symbol": CURRENCY_SYMBOL})
 
 
 @app.get("/transactions/{idempotency_key}/splits", response_class=HTMLResponse)

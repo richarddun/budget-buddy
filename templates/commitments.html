@@ -51,6 +51,17 @@
         </div>
       </div>
 
+      <div class="panel" style="background:#1a2332;border-color:#2d3a4a">
+        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px">
+          <div>
+            <div class="section-title" style="margin-bottom:4px">Auto-Generate</div>
+            <span class="muted">Create commitments from detected subscriptions with confidence ≥ 70%</span>
+          </div>
+          <button id="btn-generate" class="btn" style="background:#10b981" type="button">Generate from Subscriptions</button>
+          <span id="gen-status" class="muted"></span>
+        </div>
+      </div>
+
       <div class="panel">
         <div class="section-title">Add Commitment</div>
         <div style="display:flex; gap:8px; align-items:flex-end; flex-wrap:wrap">
@@ -205,6 +216,22 @@
       }
 
       (async () => {
+        // Generate from subscriptions
+        document.getElementById('btn-generate').addEventListener('click', async () => {
+          const btn = document.getElementById('btn-generate');
+          const status = document.getElementById('gen-status');
+          btn.disabled = true;
+          status.textContent = 'Generating...';
+          try {
+            const r = await fetchJSON(base() + '/api/commitments/generate-from-subscriptions', { method: 'POST' });
+            status.textContent = 'Created ' + r.created + ', skipped ' + r.skipped;
+            await loadList();
+          } catch(e) {
+            status.textContent = 'Failed: ' + e.message;
+          }
+          btn.disabled = false;
+        });
+
         // Prefill token from localStorage
         document.getElementById('admin-token-input').value = getAdminToken();
         document.getElementById('btn-save-token').addEventListener('click', () => {

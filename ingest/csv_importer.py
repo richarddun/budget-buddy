@@ -264,3 +264,115 @@ def run_import(db_path: Path, csv_path: Path, *, account_override: Optional[str]
         notes=json.dumps(notes),
     )
 
+def run_import_from_parsed_rows(
+    db_path: Path,
+    parsed_rows: list,
+    *,
+    account_override: Optional[str] = None,
+    account_currency: str = "EUR",
+) -> CsvImportResult:
+    """Import transactions from parser-normalised canonical rows.
+
+    Each parsed_row must be a dict from parser.parse_row() with keys:
+        date (YYYY-MM-DD), payee, memo, amount_cents (int),
+        currency (str), category (str | '')
+    """
+    run_migrations(db_path)
+
+    started_at = datetime.utcnow().isoformat(timespec="seconds") + "Z"
+    rows_upserted = 0
+    status = "success"
+    notes: Dict[str, Any] = {"mode": "csv-parsed", "row_count": len(parsed_rows)}
+
+    with _connect(db_path) as conn:
+        cur = conn.execute(
+            "INSERT INTO ingest_audit(source, run_started_at, status, notes) VALUES(?, ?, ?, ?)",
+            ("csv-importer", started_at, "running", json.dumps(notes)),
+        )
+        audit_id = int(cur.lastrowid)
+        holding_id = _ensure_holding_category(conn)
+
+        upsert_sql = (
+            "INSERT INTO transactions("
+            " idempotency_key, account_id, posted_at, amount_cents,"
+            " payee, memo, external_id, source, category_id, is_cleared, import_meta_json"
+            ") VALUES(?, ?, ?, ?, ?, ?, ?, 'csv-importer', ?, ?, ?)"
+            " ON CONFLICT(idempotency_key) DO UPDATE SET"
+            " account_id = excluded.account_id,"
+            " posted_at = excluded.posted_at,"
+            " amount_cents = excluded.amount_cents,"
+            " payee = excluded.payee,"
+            " memo = excluded.memo,"
+            " external_id = excluded.external_id,"
+            " source = excluded.source,"
+            " category_id = COALESCE(excluded.category_id, transactions.category_id),"
+            " is_cleared = excluded.is_cleared,"
+            " import_meta_json = excluded.import_meta_json"
+        )
+
+        for row in parsed_rows:
+            date_iso = row.get("date", "")
+            posted_at = (date_iso + "T00:00:00Z") if date_iso else datetime.utcnow().isoformat(timespec="seconds") + "Z"
+            payee = (row.get("payee") or "").strip()
+            memo = (row.get("memo") or "").strip()
+            amount_cents = row.get("amount_cents", 0)
+            if not isinstance(amount_cents, int):
+                amount_cents = int(amount_cents)
+            currency = (row.get("currency") or account_currency).strip()
+            category_name = (row.get("category") or "").strip()
+
+            acct_name = account_override if account_override else ("CSV Import (" + currency + ")")
+            local_account_id = _upsert_account(conn, name=acct_name, type_="checking", currency=currency)
+
+            category_id = None
+            if category_name:
+                category_id = _lookup_category_map(conn, source="csv-importer", external_id=category_name)
+            if category_id is None:
+                category_id = holding_id
+
+            idem_key = _build_idem(
+                "source:csv-importer",
+                date_iso=date_iso,
+                account_name=acct_name,
+                amount_cents=amount_cents,
+                payee=payee,
+                memo=memo,
+                category=category_name,
+            )
+
+            import_meta = {
+                "csv_category": category_name,
+                "csv_account": acct_name,
+                "parser_normalised": True,
+            }
+
+            conn.execute(
+                upsert_sql,
+                (
+                    idem_key,
+                    local_account_id,
+                    posted_at,
+                    amount_cents,
+                    payee,
+                    memo,
+                    None,
+                    category_id,
+                    0,
+                    json.dumps(import_meta, ensure_ascii=False),
+                ),
+            )
+            rows_upserted += 1
+
+        finished_at = datetime.utcnow().isoformat(timespec="seconds") + "Z"
+        conn.execute(
+            "UPDATE ingest_audit SET run_finished_at = ?, rows_upserted = ?, status = ?, notes = ? WHERE id = ?",
+            (finished_at, rows_upserted, "success", json.dumps(notes), audit_id),
+        )
+
+    return CsvImportResult(
+        started_at=started_at,
+        finished_at=finished_at,
+        rows_upserted=rows_upserted,
+        status=status,
+        notes=json.dumps(notes),
+    )
